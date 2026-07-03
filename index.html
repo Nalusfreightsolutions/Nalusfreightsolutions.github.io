@@ -874,7 +874,7 @@ let editingQuoteId = null;
 let editingSalesJobId = null;
 let quoteFilter = { status:'All', client:'All', submittedBy:'All', dateFrom:'', dateTo:'' };
 let quoteReportMonth = new Date().toISOString().slice(0,7);
-let pitMapQuery = { address:'', material:'All', jobName:'' };
+let pitMapQuery = { address:'', materials:[], jobName:'' };
 let pitMapResults = [];
 let pitMapSelectedPitIds = new Set();
 let pitMapJobLocation = null; // {lat,lng} of the last-searched job address, for the map + route lines
@@ -1102,13 +1102,13 @@ function quoteToRow(q){
     submitted_by:q.submittedBy||null, status:q.status||'Submitted', notes:q.notes||null };
 }
 function materialLineToQuoteRow(m, quoteId){
-  return { id:m.id, quote_id:quoteId, pit_id:m.pit||null, material:m.material||null, alt_materials:m.altMaterials||null, unit:m.unit||null,
+  return { id:m.id, quote_id:quoteId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
     qty_requested:numOrNull(m.qtyRequested), price:numOrNull(m.price), material_mode:m.materialMode||'perUnit',
     tax_rate:numOrNull(m.taxRate), trucking_cost:numOrNull(m.truckingCost), trucking_mode:m.truckingMode||'perUnit',
     profit_override:numOrNull(m.profitOverride) };
 }
 function rowToMaterialLine(r, includeQtyFinal){
-  const line = { id:r.id, pit:r.pit_id||'', material:r.material||'', altMaterials:r.alt_materials||'', unit:r.unit||'Tons', qtyRequested:r.qty_requested??'',
+  const line = { id:r.id, pit:r.pit_id||'', material:r.material||'', unit:r.unit||'Tons', qtyRequested:r.qty_requested??'',
     price:r.price??'', materialMode:r.material_mode||'perUnit', taxRate:r.tax_rate??'', truckingCost:r.trucking_cost??'',
     truckingMode:r.trucking_mode||'perUnit', profitOverride:r.profit_override??'' };
   if(includeQtyFinal) line.qtyFinal = r.qty_final??'';
@@ -1126,7 +1126,7 @@ function salesJobToRow(j){
     quote_id:j.quoteId||null };
 }
 function materialLineToSalesJobRow(m, jobId){
-  return { id:m.id, sales_job_id:jobId, pit_id:m.pit||null, material:m.material||null, alt_materials:m.altMaterials||null, unit:m.unit||null,
+  return { id:m.id, sales_job_id:jobId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
     qty_requested:numOrNull(m.qtyRequested), qty_final:numOrNull(m.qtyFinal), price:numOrNull(m.price),
     material_mode:m.materialMode||'perUnit', tax_rate:numOrNull(m.taxRate), trucking_cost:numOrNull(m.truckingCost),
     trucking_mode:m.truckingMode||'perUnit', profit_override:numOrNull(m.profitOverride) };
@@ -2536,20 +2536,6 @@ function distinctPitMaterials(){
   state.pits.forEach(p=>(p.materials||[]).forEach(m=>{ if(m.name) s.add(m.name.trim()); }));
   return [...s].sort((a,b)=>a.localeCompare(b));
 }
-// Groups of material names that are commercially interchangeable even though pits
-// label them differently — e.g. a client asking for "fill" can be quoted either.
-// Add more groups here as the business flags them; each group is treated as a
-// set of synonyms in both directions (searching for any name in a group matches
-// pits carrying any other name in that same group).
-const MATERIAL_SYNONYM_GROUPS = [
-  ['Fill Dirt', 'A-3 Fill'],
-];
-function materialSynonyms(name){
-  const n = (name||'').trim().toLowerCase();
-  if(!n) return [];
-  const group = MATERIAL_SYNONYM_GROUPS.find(g=>g.some(x=>x.toLowerCase()===n));
-  return group || [name];
-}
 function pitsMissingLocation(){
   return state.pits.filter(p=>p.address && (p.lat==null || p.lng==null));
 }
@@ -2596,18 +2582,16 @@ async function geocodeAllMissingPits(){
 async function findNearbyPits(){
   pitMapQuery.address = (document.getElementById('pm-address')?.value||'').trim();
   pitMapQuery.jobName = (document.getElementById('pm-jobname')?.value||'').trim();
-  pitMapQuery.material = (document.getElementById('pm-material')?.value||'').trim() || 'All';
   if(!pitMapQuery.address){ alert('Enter the project/job address first.'); return; }
   if(!state.orsApiKey){ alert('Add a free OpenRouteService API key below first — it\'s needed to calculate driving distance and time.'); return; }
 
   const locatedPits = state.pits.filter(p=>p.lat!=null && p.lng!=null);
   if(!locatedPits.length){ alert('No pits are located on the map yet. Click "Locate pits on map" above first (it can take a minute or two to geocode every pit), then try your search again.'); return; }
-  const acceptableNames = materialSynonyms(pitMapQuery.material);
   const candidates = locatedPits.filter(p=>{
-    if(pitMapQuery.material==='All') return true;
-    return (p.materials||[]).some(m=>acceptableNames.includes(m.name));
+    if(!pitMapQuery.materials.length) return true;
+    return (p.materials||[]).some(m=>pitMapQuery.materials.includes(m.name));
   });
-  if(!candidates.length){ alert('None of the located pits carry that material yet. Double-check the spelling/material name, or add it to the pit on the Contacts and Pits tab, then use "Locate pits on map" above.'); return; }
+  if(!candidates.length){ alert('None of the located pits carry any of those materials yet. Double-check the spelling/material name(s), or add it to the pit on the Contacts and Pits tab, then use "Locate pits on map" above.'); return; }
 
   const btn = document.getElementById('pm-find');
   if(btn){ btn.disabled = true; btn.textContent = 'Searching…'; }
@@ -2677,7 +2661,6 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   if(!pit) return;
   const jobName = (document.getElementById('pm-jobname')?.value||'').trim();
   const jobAddress = (document.getElementById('pm-address')?.value||'').trim();
-  const materialFilter = (document.getElementById('pm-material')?.value||'').trim() || 'All';
 
   let q = state.quotes.find(x=>(x.jobName||'').trim().toLowerCase()===jobName.toLowerCase());
   if(!q){
@@ -2691,7 +2674,11 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   line.pit = pit.id;
   line.unit = billUnit;
   line.taxRate = pit.taxRate || '';
-  const matchMaterial = materialFilter!=='All' ? (pit.materials||[]).find(m=>m.name===materialFilter) : null;
+  // If exactly one of the searched materials matches this pit, pre-fill it; if
+  // the search matched several of the pit's materials, leave it blank rather than
+  // guess which one — the rep picks the right one in the quote form below.
+  const pitMatches = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
+  const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
   if(matchMaterial) line.material = matchMaterial.name;
   if(billUnit==='Loads'){ line.truckingCost = calc? +calc.perLoad.toFixed(2) : ''; }
   else if(billUnit==='Hours'){ line.truckingCost = calc? +calc.perHour.toFixed(2) : ''; }
@@ -2743,9 +2730,16 @@ function renderPitMapTab(){
     <div class="formgrid">
       <div class="field" style="grid-column:1/-1;"><label>Project / Job Address</label><input type="text" id="pm-address" value="${(pitMapQuery.address||'').replace(/"/g,'&quot;')}" placeholder="e.g. 123 Main St, Orlando, FL"></div>
       <div class="field"><label>Job Name (optional)</label><input type="text" id="pm-jobname" value="${(pitMapQuery.jobName||'').replace(/"/g,'&quot;')}" placeholder="e.g. Windermere Rd Widening"></div>
-      <div class="field"><label>Material Needed</label>
-        <input type="text" id="pm-material" list="pm-material-list" placeholder="Start typing… (leave blank for all materials)" value="${(pitMapQuery.material && pitMapQuery.material!=='All' ? pitMapQuery.material : '').replace(/"/g,'&quot;')}">
-        <datalist id="pm-material-list">${materials.map(m=>`<option value="${m.replace(/"/g,'&quot;')}">`).join('')}</datalist>
+      <div class="field" style="grid-column:1/-1;"><label>Material(s) Needed</label>
+        <div class="note" style="margin-bottom:8px;">Different pits sometimes call the same material by different names (e.g. clay vs. stabilizer). Add every name that would work — leave blank to search all materials.</div>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="pm-material" list="pm-material-list" placeholder="Start typing a material name…" style="flex:1;">
+          <datalist id="pm-material-list">${materials.map(m=>`<option value="${m.replace(/"/g,'&quot;')}">`).join('')}</datalist>
+          <button class="btn btn-ghost btn-sm" id="pm-material-add">+ Add</button>
+        </div>
+        ${pitMapQuery.materials.length? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+          ${pitMapQuery.materials.map(m=>`<span class="tag" style="display:inline-flex; align-items:center; gap:6px;">${m.replace(/</g,'&lt;')} <button class="btn btn-ghost btn-sm" data-remove-pm-material="${m.replace(/"/g,'&quot;')}" style="padding:0 4px;">✕</button></span>`).join('')}
+        </div>` : ''}
       </div>
     </div>
     <button class="btn btn-primary" id="pm-find" style="margin-top:10px;">Find Nearby Pits</button>
@@ -2755,16 +2749,24 @@ function renderPitMapTab(){
     <table>
       <thead><tr><th>Pit</th><th>Materials</th><th>Round-trip Distance</th><th>Round-trip Drive Time</th><th></th></tr></thead>
       <tbody>
-        ${pitMapResults.map(r=>`<tr ${pitMapSelectedPitIds.has(r.pit.id)?'style="background:var(--steel-100);"':''}>
+        ${pitMapResults.map(r=>{
+          const all = (r.pit.materials||[]).filter(m=>m.name);
+          const matched = pitMapQuery.materials.length ? all.filter(m=>pitMapQuery.materials.includes(m.name)) : all;
+          const shown = matched.slice(0,3);
+          const extra = matched.length - shown.length;
+          const materialsCell = shown.length
+            ? shown.map(m=>`${m.name}: ${fmtPitPrice(m.price, m.unit)}`).join('<br>') + (extra>0? `<br><span style="color:#5C7085;">+${extra} more</span>` : '')
+            : '—';
+          return `<tr ${pitMapSelectedPitIds.has(r.pit.id)?'style="background:var(--steel-100);"':''}>
           <td><strong>${pitLabel(r.pit)}</strong></td>
-          <td>${(r.pit.materials||[]).filter(m=>m.name).map(m=>m.name).join(', ')||'—'}</td>
+          <td>${materialsCell}</td>
           <td class="num">${r.roundTripMiles.toFixed(1)} mi</td>
           <td class="num">${Math.round(r.roundTripMinutes)} min</td>
           <td style="white-space:nowrap;">
             <button class="btn ${pitMapSelectedPitIds.has(r.pit.id)?'btn-primary':'btn-ghost'} btn-sm" data-toggle-pit-calc="${r.pit.id}">${pitMapSelectedPitIds.has(r.pit.id)?'✓ Comparing':'Compare'}</button>
             <button class="btn btn-ghost btn-sm" data-add-to-quote="${r.pit.id}">Add to Quote</button>
           </td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
       </tbody>
     </table>
     </div>` : ''}
@@ -2900,7 +2902,7 @@ function computeDocTotals(doc){
 function unitLabelSales(unitType){
   return {'Tons':'ton(s)','Yards':'yard(s)','Loads':'load(s)','Hours':'hour(s)'}[unitType] || 'unit(s)';
 }
-function mkEmptyMaterialLine(){ return {id:uid(), pit:'', material:'', altMaterials:'', unit:'Tons', qtyRequested:'', qtyFinal:'', price:'', materialMode:'perUnit', taxRate:'', truckingCost:'', truckingMode:'perUnit', profitOverride:''}; }
+function mkEmptyMaterialLine(){ return {id:uid(), pit:'', material:'', unit:'Tons', qtyRequested:'', qtyFinal:'', price:'', materialMode:'perUnit', taxRate:'', truckingCost:'', truckingMode:'perUnit', profitOverride:''}; }
 
 let quoteMaterialDraft = [];
 let salesJobMaterialDraft = [];
@@ -2963,9 +2965,6 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
 
           </select>
         </div>
-        <div style="flex:1; min-width:150px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Also acceptable as (optional)</label>
-          <input type="text" data-${prefix}mat-field="altMaterials" data-${prefix}mat-idx="${i}" value="${(row.altMaterials||'').replace(/"/g,'&quot;')}" placeholder="${materialSynonyms(row.material).filter(x=>x!==row.material).join(', ') || 'e.g. A-3 Fill'}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
-        </div>
         <div style="width:90px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Unit</label>
           <select data-${prefix}mat-field="unit" data-${prefix}mat-idx="${i}" class="${prefix}mat-unit" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
             ${['Tons','Yards','Loads','Hours'].map(u=>`<option ${row.unit===u?'selected':''}>${u}</option>`).join('')}
@@ -3003,7 +3002,6 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
         </div>
         <button class="btn btn-danger btn-sm" data-remove-${prefix}mat="${i}">✕</button>
       </div>
-      ${row.altMaterials? `<div style="font-size:11.5px; color:#5C7085; margin-top:6px;">Also offered as: <strong>${row.altMaterials.replace(/</g,'&lt;')}</strong> (same price/qty as above)</div>` : ''}
       <div style="font-size:11.5px; color:#5C7085; margin-top:8px;">
         Material Cost: <strong>${fmtMoney(computeMaterialLine({...row}).materialCost)}</strong>${row.materialMode==='flat'?' (flat)':' (per unit × qty)'} ·
         Tax: <strong>${fmtMoney(computeMaterialLine({...row}).taxAmount)}</strong> ·
@@ -3887,7 +3885,7 @@ function buildQuotePrintHTML(q){
   computeDocTotals(q);
   const rows = (q.materials||[]).filter(m=>m.material).map(m=>`
     <tr>
-      <td>${m.material}${m.altMaterials? ` <span style="font-weight:400; color:#5C7085;">(or ${m.altMaterials.replace(/</g,'&lt;')})</span>` : ''}</td>
+      <td>${m.material}</td>
       <td class="num">${m.qtyRequested||0} ${unitLabelSales(m.unit)}</td>
       <td class="num">${fmtMoney(m.materialCost)}</td>
       <td class="num">${fmtMoney(m.truckingTotal)}</td>
@@ -4787,6 +4785,21 @@ function attachHandlers(){
   if(pmChangeKey) pmChangeKey.onclick = ()=>{ state.orsApiKey=''; persist(); render(); };
   const pmFind = document.getElementById('pm-find');
   if(pmFind) pmFind.onclick = findNearbyPits;
+  const pmMaterialInput = document.getElementById('pm-material');
+  const addPmMaterial = ()=>{
+    const val = (pmMaterialInput?.value||'').trim();
+    if(!val) return;
+    if(!pitMapQuery.materials.includes(val)) pitMapQuery.materials.push(val);
+    if(pmMaterialInput) pmMaterialInput.value = '';
+    render();
+  };
+  const pmMaterialAdd = document.getElementById('pm-material-add');
+  if(pmMaterialAdd) pmMaterialAdd.onclick = addPmMaterial;
+  if(pmMaterialInput) pmMaterialInput.onkeydown = (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addPmMaterial(); } };
+  document.querySelectorAll('[data-remove-pm-material]').forEach(b=>b.onclick=()=>{
+    pitMapQuery.materials = pitMapQuery.materials.filter(m=>m!==b.dataset.removePmMaterial);
+    render();
+  });
   document.querySelectorAll('[data-toggle-pit-calc]').forEach(b=>b.onclick=()=>{
     const id = b.dataset.togglePitCalc;
     const adding = !pitMapSelectedPitIds.has(id);

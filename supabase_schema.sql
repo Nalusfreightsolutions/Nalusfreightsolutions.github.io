@@ -213,7 +213,6 @@ create table quote_materials (
   quote_id text references quotes(id) on delete cascade,
   pit_id text references pits(id),
   material text,
-  alt_materials text, -- other interchangeable material names for this line (display only, e.g. "A-3 Fill")
   unit text,
   qty_requested numeric,
   price numeric,
@@ -253,7 +252,6 @@ create table sales_job_materials (
   sales_job_id text references sales_jobs(id) on delete cascade,
   pit_id text references pits(id),
   material text,
-  alt_materials text, -- other interchangeable material names for this line (display only, e.g. "A-3 Fill")
   unit text,
   qty_requested numeric,
   qty_final numeric,
