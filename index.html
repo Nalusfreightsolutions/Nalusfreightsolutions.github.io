@@ -2692,22 +2692,23 @@ function promptAddPitToQuote(pitId){
   // The "Per [Unit]" option used to always show whatever unit was picked in Rate
   // Calculator Settings (defaults to Tons) — so "Per Yard" would silently never
   // appear for a yards-priced material unless that global dropdown happened to
-  // already be set to Yards. Base it on the actual matched material's own unit
-  // instead, so the right option always shows regardless of that global setting.
+  // already be set to Yards. Base it on the actual matched materials' own units
+  // instead. A broad search term (e.g. "Fill") can match several materials at one
+  // pit that don't all share a unit (a yards-priced "Fill Dirt" and a tons-priced
+  // "A-3 Structural Fill" at the same pit, say) — offer one option per distinct
+  // unit found rather than collapsing to a single guess and hiding the rest.
   const pit = result ? result.pit : state.pits.find(p=>p.id===pitId);
   const pitMatches = pit && pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>materialQueryMatches(m.name)) : [];
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
-  // Even when the search matched more than one material at this pit (so we can't
-  // auto-fill a single material name below), they usually share the same unit —
-  // e.g. "Fill Dirt" and "A-3 Fill" are both sold by the yard at a given pit — so
-  // still use it for the billing option's unit as long as every match agrees.
   const matchedUnits = [...new Set(pitMatches.map(m=>m.unit).filter(u=>u==='Tons'||u==='Yards'))];
-  const perUnitType = matchedUnits.length===1 ? matchedUnits[0] : pitMapCalc.capacityUnit;
-  const unitLabel = perUnitType.replace(/s$/,'');
+  const perUnitTypes = matchedUnits.length ? matchedUnits : [pitMapCalc.capacityUnit];
   const options = [
     { label:`Per Load — ${calc? fmtMoney(calc.perLoad) : '—'}/load`, value:'Loads' }
   ];
-  if(calc && calc.perUnit!=null) options.push({ label:`Per ${unitLabel} — ${fmtMoney(calc.perUnit)}/${unitLabel.toLowerCase()}`, value: perUnitType });
+  if(calc && calc.perUnit!=null) perUnitTypes.forEach(u=>{
+    const unitLabel = u.replace(/s$/,'');
+    options.push({ label:`Per ${unitLabel} — ${fmtMoney(calc.perUnit)}/${unitLabel.toLowerCase()}`, value: u });
+  });
   options.push({ label:`Per Hour — ${calc? fmtMoney(calc.perHour) : '—'}/hr`, value:'Hours' });
   showUnitPicker('How do you want to bill trucking for this material?', options, (unit)=>{
     addPitMapMaterialToQuote(pitId, unit, calc);
@@ -2731,10 +2732,13 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   line.pit = pit.id;
   line.unit = billUnit;
   line.taxRate = pit.taxRate || '';
-  // If exactly one of the searched materials matches this pit, pre-fill it; if
-  // the search matched several of the pit's materials, leave it blank rather than
-  // guess which one — the rep picks the right one in the quote form below.
-  const pitMatches = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>materialQueryMatches(m.name)) : [];
+  // If exactly one of the searched materials matches this pit, pre-fill it. When
+  // billing by Tons/Yards specifically, narrow to matches with that exact unit
+  // first — e.g. a "Fill" search matching both a yards-priced and a tons-priced
+  // material at the same pit is only ambiguous overall, not once the rep has
+  // already told us (by picking "Per Yard") which one they mean.
+  const pitMatchesAll = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>materialQueryMatches(m.name)) : [];
+  const pitMatches = (billUnit==='Tons'||billUnit==='Yards') ? pitMatchesAll.filter(m=>m.unit===billUnit) : pitMatchesAll;
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
   if(matchMaterial) line.material = matchMaterial.name;
   // Truck Capacity per Load (Rate Calculator Settings) doubles as "how much of this
