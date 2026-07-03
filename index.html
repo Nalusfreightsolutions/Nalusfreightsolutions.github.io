@@ -2595,7 +2595,12 @@ async function findNearbyPits(){
 
   const btn = document.getElementById('pm-find');
   if(btn){ btn.disabled = true; btn.textContent = 'Searching…'; }
-  const jobLoc = await geocodeAddress(pitMapQuery.address);
+  // Same reasoning as pit-address geocoding elsewhere: without a state, a geocoder can
+  // match a same-named place anywhere in the world (e.g. "Sorrento" resolved to Italy
+  // instead of Sorrento, FL, making every pit look unroutable). Assume Florida unless
+  // the address already says otherwise.
+  const jobAddressForGeocoding = pitMapQuery.address.toLowerCase().includes('fl') ? pitMapQuery.address : pitMapQuery.address+', FL';
+  const jobLoc = await geocodeAddress(jobAddressForGeocoding);
   if(!jobLoc){
     alert('Could not locate that address — double check it and try again.');
     if(btn){ btn.disabled=false; btn.textContent='Find Nearby Pits'; }
