@@ -4786,11 +4786,15 @@ function attachHandlers(){
   const pmFind = document.getElementById('pm-find');
   if(pmFind) pmFind.onclick = findNearbyPits;
   const pmMaterialInput = document.getElementById('pm-material');
+  const syncPmFieldsBeforeRerender = ()=>{
+    pitMapQuery.address = (document.getElementById('pm-address')?.value||'');
+    pitMapQuery.jobName = (document.getElementById('pm-jobname')?.value||'');
+  };
   const addPmMaterial = ()=>{
     const val = (pmMaterialInput?.value||'').trim();
     if(!val) return;
     if(!pitMapQuery.materials.includes(val)) pitMapQuery.materials.push(val);
-    if(pmMaterialInput) pmMaterialInput.value = '';
+    syncPmFieldsBeforeRerender();
     render();
   };
   const pmMaterialAdd = document.getElementById('pm-material-add');
@@ -4798,6 +4802,7 @@ function attachHandlers(){
   if(pmMaterialInput) pmMaterialInput.onkeydown = (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addPmMaterial(); } };
   document.querySelectorAll('[data-remove-pm-material]').forEach(b=>b.onclick=()=>{
     pitMapQuery.materials = pitMapQuery.materials.filter(m=>m!==b.dataset.removePmMaterial);
+    syncPmFieldsBeforeRerender();
     render();
   });
   document.querySelectorAll('[data-toggle-pit-calc]').forEach(b=>b.onclick=()=>{
