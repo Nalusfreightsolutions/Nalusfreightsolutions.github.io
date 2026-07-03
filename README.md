@@ -2,6 +2,13 @@
 
 This folder is everything you need to keep working on this app in Claude Code.
 
+## Quick Reference (start here)
+- **To jump into this project in a new chat, just say:** "let's work on Jarelys Command Center" (or "Jay's Command Center") — that phrase alone tells Claude what project this is and that you want to add, change, or remove something on the app. No need to explain anything else first.
+- **The live app (link for your sales team):** https://nalusfreightsolutions.github.io/
+- **Sign-in:** email + password, set up per person by the owner in the Supabase dashboard (Authentication → Users) — no public sign-up page.
+- **How changes go live:** tell Claude what to change → Claude edits the code, tests it, and pushes it → the live site updates automatically within a minute or two. You don't need Terminal, git, or GitHub for this — that was all one-time setup.
+- **This file (`README.md`)** is the full history and status of the project — Claude reads it first in every new session, so it's always safe to ask "what's the status?" or "what changed last time?"
+
 ## Live deployment
 The app is publicly hosted at **https://nalusfreightsolutions.github.io/** — this is the link to give sales reps. Source is pushed from this folder to GitHub repo `Nalusfreightsolutions/Nalusfreightsolutions.github.io` (public repo, named to match GitHub's root-domain Pages convention). Push access is via a repo-scoped SSH deploy key at `~/.ssh/jarelys_deploy_key` (git remote `origin` uses SSH alias `github.com-jarelys` — see `~/.ssh/config`), so Claude Code can push updates without needing the owner's GitHub password each session. Standard workflow for any future change: edit `index.html` locally → test via the local preview server → `git commit` → `git push origin main` → GitHub Pages rebuilds automatically within a minute or two.
 
