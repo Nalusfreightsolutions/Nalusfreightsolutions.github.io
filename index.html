@@ -874,7 +874,7 @@ let editingQuoteId = null;
 let editingSalesJobId = null;
 let quoteFilter = { status:'All', client:'All', submittedBy:'All', dateFrom:'', dateTo:'' };
 let quoteReportMonth = new Date().toISOString().slice(0,7);
-let pitMapQuery = { address:'', materials:[], jobName:'' };
+let pitMapQuery = { address:'', materials:[], jobName:'', maxMiles:'' };
 let pitMapResults = [];
 let pitMapSelectedPitIds = new Set();
 let pitMapJobLocation = null; // {lat,lng} of the last-searched job address, for the map + route lines
@@ -2582,6 +2582,7 @@ async function geocodeAllMissingPits(){
 async function findNearbyPits(){
   pitMapQuery.address = (document.getElementById('pm-address')?.value||'').trim();
   pitMapQuery.jobName = (document.getElementById('pm-jobname')?.value||'').trim();
+  pitMapQuery.maxMiles = (document.getElementById('pm-maxmiles')?.value||'').trim();
   if(!pitMapQuery.address){ alert('Enter the project/job address first.'); return; }
   if(!state.orsApiKey){ alert('Add a free OpenRouteService API key below first — it\'s needed to calculate driving distance and time.'); return; }
 
@@ -2661,11 +2662,20 @@ function promptAddPitToQuote(pitId){
   if(!jobName){ alert('Enter a Job Name above first — quotes on the Pit Map are grouped by Job Name.'); return; }
   const result = pitMapResults.find(r=>r.pit.id===pitId);
   const calc = result ? computePitMapCalcFor(result) : null;
-  const unitLabel = pitMapCalc.capacityUnit.replace(/s$/,'');
+  // The "Per [Unit]" option used to always show whatever unit was picked in Rate
+  // Calculator Settings (defaults to Tons) — so "Per Yard" would silently never
+  // appear for a yards-priced material unless that global dropdown happened to
+  // already be set to Yards. Base it on the actual matched material's own unit
+  // instead, so the right option always shows regardless of that global setting.
+  const pit = result ? result.pit : state.pits.find(p=>p.id===pitId);
+  const pitMatches = pit && pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
+  const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
+  const perUnitType = (matchMaterial && (matchMaterial.unit==='Tons' || matchMaterial.unit==='Yards')) ? matchMaterial.unit : pitMapCalc.capacityUnit;
+  const unitLabel = perUnitType.replace(/s$/,'');
   const options = [
     { label:`Per Load — ${calc? fmtMoney(calc.perLoad) : '—'}/load`, value:'Loads' }
   ];
-  if(calc && calc.perUnit!=null) options.push({ label:`Per ${unitLabel} — ${fmtMoney(calc.perUnit)}/${unitLabel.toLowerCase()}`, value: pitMapCalc.capacityUnit });
+  if(calc && calc.perUnit!=null) options.push({ label:`Per ${unitLabel} — ${fmtMoney(calc.perUnit)}/${unitLabel.toLowerCase()}`, value: perUnitType });
   options.push({ label:`Per Hour — ${calc? fmtMoney(calc.perHour) : '—'}/hr`, value:'Hours' });
   showUnitPicker('How do you want to bill trucking for this material?', options, (unit)=>{
     addPitMapMaterialToQuote(pitId, unit, calc);
@@ -2745,6 +2755,7 @@ function renderPitMapTab(){
     <div class="formgrid">
       <div class="field" style="grid-column:1/-1;"><label>Project / Job Address</label><input type="text" id="pm-address" value="${(pitMapQuery.address||'').replace(/"/g,'&quot;')}" placeholder="e.g. 123 Main St, Orlando, FL"></div>
       <div class="field"><label>Job Name (optional)</label><input type="text" id="pm-jobname" value="${(pitMapQuery.jobName||'').replace(/"/g,'&quot;')}" placeholder="e.g. Windermere Rd Widening"></div>
+      <div class="field"><label>Max Round-Trip Distance (miles, optional)</label><input type="number" id="pm-maxmiles" value="${pitMapQuery.maxMiles||''}" placeholder="e.g. 100 — leave blank for no limit"></div>
       <div class="field" style="grid-column:1/-1;"><label>Material(s) Needed</label>
         <div class="note" style="margin-bottom:8px;">Different pits sometimes call the same material by different names (e.g. clay vs. stabilizer). Add every name that would work — leave blank to search all materials.</div>
         <div style="display:flex; gap:8px;">
@@ -2758,13 +2769,18 @@ function renderPitMapTab(){
       </div>
     </div>
     <button class="btn btn-primary" id="pm-find" style="margin-top:10px;">Find Nearby Pits</button>
-    ${pitMapResults.length? `
-    <div class="note" style="margin-top:14px;">Check "Compare" on 2+ pits to see their rate calculators side by side. "Add to Quote" builds (or adds another material to) the quote for the Job Name above — add as many pits/materials as the job needs.</div>
+    ${pitMapResults.length? (()=>{
+      const maxMi = Number(pitMapQuery.maxMiles)||0;
+      const shownResults = maxMi>0 ? pitMapResults.filter(r=>r.roundTripMiles<=maxMi) : pitMapResults;
+      const hiddenCount = pitMapResults.length - shownResults.length;
+      return `
+    <div class="note" style="margin-top:14px;">Check "Compare" on 2+ pits to see their rate calculators side by side. "Add to Quote" builds (or adds another material to) the quote for the Job Name above — add as many pits/materials as the job needs.${hiddenCount? ` ${hiddenCount} pit(s) beyond ${maxMi} mi round trip are hidden — clear/raise the max distance above to see them.` : ''}</div>
+    ${shownResults.length? `
     <div class="tablewrap">
     <table>
       <thead><tr><th>Pit</th><th>Materials</th><th>Round-trip Distance</th><th>Round-trip Drive Time</th><th></th></tr></thead>
       <tbody>
-        ${pitMapResults.map(r=>{
+        ${shownResults.map(r=>{
           const all = (r.pit.materials||[]).filter(m=>m.name);
           const matched = pitMapQuery.materials.length ? all.filter(m=>pitMapQuery.materials.includes(m.name)) : all;
           const shown = matched.slice(0,3);
@@ -2785,6 +2801,8 @@ function renderPitMapTab(){
       </tbody>
     </table>
     </div>` : ''}
+  `;
+    })() : ''}
   </div>
 
   ${pitMapSelectedPitIds.size? `
@@ -4804,7 +4822,10 @@ function attachHandlers(){
   const syncPmFieldsBeforeRerender = ()=>{
     pitMapQuery.address = (document.getElementById('pm-address')?.value||'');
     pitMapQuery.jobName = (document.getElementById('pm-jobname')?.value||'');
+    pitMapQuery.maxMiles = (document.getElementById('pm-maxmiles')?.value||'');
   };
+  const pmMaxMiles = document.getElementById('pm-maxmiles');
+  if(pmMaxMiles) pmMaxMiles.oninput = ()=>{ syncPmFieldsBeforeRerender(); render(); };
   const addPmMaterial = ()=>{
     const val = (pmMaterialInput?.value||'').trim();
     if(!val) return;
