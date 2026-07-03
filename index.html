@@ -121,6 +121,9 @@
   tr:hover td{background:var(--steel-100);}
   .num{font-family:'JetBrains Mono'; font-size:12.5px;}
   .tablewrap{overflow-x:auto;}
+  /* Keeps Edit/Delete reachable without scrolling all the way across very wide
+     tables (e.g. NNL/NFS Loads, which can run 20+ columns). */
+  .sticky-actions{position:sticky; right:0; background:#fff; box-shadow:-2px 0 4px rgba(0,0,0,0.06);}
   .pill{padding:3px 9px; border-radius:20px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;}
   .pill.paid{background:#E2F5EA; color:var(--good-500);}
   .pill.pending{background:#FDF1E2; color:var(--amber-600);}
@@ -956,7 +959,7 @@ function hideDataSafetyWarning(){
 document.getElementById('safety-banner-dismiss').onclick = hideDataSafetyWarning;
 
 function mkEmptyTicketRow(defaults){ return { ticket:'', truck:(defaults&&defaults.truck)||'', driver:(defaults&&defaults.driver)||'', qty:'' }; }
-function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverPay:'', status:'Pending' }; }
+function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', material:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverPay:'', status:'Pending' }; }
 let jobShared = { NNL: mkDefaultJobShared(), NFS: mkDefaultJobShared() };
 let jobTicketRows = { NNL: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()], NFS: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()] };
 
@@ -1738,7 +1741,8 @@ function renderJobTicketForm(company){
       <div class="field"><label>Date</label><input type="date" id="js-date" value="${s.date}"></div>
       <div class="field"><label>Broker</label><input type="text" id="js-broker" value="${s.broker||''}" placeholder="If this job runs through a broker"></div>
       <div class="field"><label>Client</label><input type="text" id="js-party" list="party-list-${company}" value="${s.party}"></div>
-      <div class="field"><label>Job Name</label><input type="text" id="js-jobname" value="${s.jobName||''}"></div>
+      <div class="field"><label>Job Name</label><input type="text" id="js-jobname" value="${s.jobName||''}" placeholder="Match the Landed Job's name so progress rolls up"></div>
+      <div class="field"><label>Material</label><input type="text" id="js-material" list="load-material-list" value="${(s.material||'').replace(/"/g,'&quot;')}" placeholder="e.g. Fill Dirt"></div>
       <div class="field"><label>Job Source</label><select id="js-jobsource">
         <option ${s.jobSource==='Direct'?'selected':''}>Direct</option>
         <option ${s.jobSource==='Referral'?'selected':''}>Referral</option>
@@ -1840,7 +1844,7 @@ function attachJobSharedHandlers(company){
   };
   bind('js-date','date'); bind('js-party','party');
   bind('js-pit','pit'); bind('js-customer','customer'); bind('js-jobname','jobName');
-  bind('js-broker','broker'); bind('js-jobsource','jobSource'); bind('js-drivertype','driverType');
+  bind('js-broker','broker'); bind('js-material','material'); bind('js-jobsource','jobSource'); bind('js-drivertype','driverType');
   bind('js-paymenttype','paymentType');
   bind('js-rate','rate', ()=>refreshAllRevenuePreviews(company));
   bind('js-driverpay','driverPay'); bind('js-status','status');
@@ -1890,7 +1894,7 @@ function saveAllTickets(company){
       l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName;
     }
     if(company==='NFS'){
-      l.broker = s.broker; l.jobName = s.jobName; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverPay = s.driverPay;
+      l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverPay = s.driverPay;
     }
     computeLoadFinancials(l);
     state.loads.push(l);
@@ -1985,13 +1989,13 @@ function loadsTableInner(company){
   const selTh = `<th style="width:30px;"><input type="checkbox" id="sel-all-${company}" ${allVisibleSelected?'checked':''} title="Select all shown"></th>`;
   const colcount = (isNNL ? 19 : 21) + 1;
   const header = selTh + (isNNL
-    ? `${sh('date','Date')}${sh('party','Broker')}${sh('pit','Pit')}${sh('customer','Customer')}${sh('jobName','Job Name')}${sh('truck','Truck #')}${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('rate','Rate')}${sh('driver','Driver')}${sh('invoiceNum','Invoice #')}${sh('revenue','Revenue')}${sh('driverPay','Driver Pay')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th></th>`
-    : `${sh('date','Date')}${sh('broker','Broker')}${sh('party','Client')}${sh('jobName','Job Name')}${sh('material','Material')}<th>Job Source</th><th>Driver Type</th>${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('driverPay',"Driver's Rate")}${sh('rate','Rate')}${sh('invoiceNum','Invoice #')}${sh('driver','Driver')}${sh('truck','Truck #')}${sh('revenue','Revenue')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th></th>`);
+    ? `${sh('date','Date')}${sh('party','Broker')}${sh('pit','Pit')}${sh('customer','Customer')}${sh('jobName','Job Name')}${sh('truck','Truck #')}${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('rate','Rate')}${sh('driver','Driver')}${sh('invoiceNum','Invoice #')}${sh('revenue','Revenue')}${sh('driverPay','Driver Pay')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`
+    : `${sh('date','Date')}${sh('broker','Broker')}${sh('party','Client')}${sh('jobName','Job Name')}${sh('material','Material')}<th>Job Source</th><th>Driver Type</th>${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('driverPay',"Driver's Rate")}${sh('rate','Rate')}${sh('invoiceNum','Invoice #')}${sh('driver','Driver')}${sh('truck','Truck #')}${sh('revenue','Revenue')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`);
 
   const rowHtml = l => {
     const isSel = selectedLoads[company].has(l.id);
     const selTd = `<td><input type="checkbox" class="row-sel" data-sel-load="${l.id}" ${isSel?'checked':''}></td>`;
-    const actions = `<td>
+    const actions = `<td class="sticky-actions">
               <button class="btn btn-ghost btn-sm" data-edit-load="${l.id}">Edit</button>
               <button class="btn btn-danger btn-sm" data-del-load="${l.id}">Delete</button>
             </td>`;
