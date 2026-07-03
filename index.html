@@ -2536,6 +2536,15 @@ function distinctPitMaterials(){
   state.pits.forEach(p=>(p.materials||[]).forEach(m=>{ if(m.name) s.add(m.name.trim()); }));
   return [...s].sort((a,b)=>a.localeCompare(b));
 }
+// Reps often type a shorthand version of a material name ("Fill", "A3 Fill") rather
+// than picking the exact catalog spelling ("Fill Dirt", "A-3 Fill") from the
+// suggestions — matching on exact equality silently found nothing in that case. This
+// normalizes away spacing/punctuation/case and matches as a substring instead.
+function normMaterialName(s){ return (s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function materialQueryMatches(catalogName){
+  const norm = normMaterialName(catalogName);
+  return pitMapQuery.materials.some(q => norm.includes(normMaterialName(q)));
+}
 function pitsMissingLocation(){
   return state.pits.filter(p=>p.address && (p.lat==null || p.lng==null));
 }
@@ -2590,7 +2599,7 @@ async function findNearbyPits(){
   if(!locatedPits.length){ alert('No pits are located on the map yet. Click "Locate pits on map" above first (it can take a minute or two to geocode every pit), then try your search again.'); return; }
   const candidates = locatedPits.filter(p=>{
     if(!pitMapQuery.materials.length) return true;
-    return (p.materials||[]).some(m=>pitMapQuery.materials.includes(m.name));
+    return (p.materials||[]).some(m=>materialQueryMatches(m.name));
   });
   if(!candidates.length){ alert('None of the located pits carry any of those materials yet. Double-check the spelling/material name(s), or add it to the pit on the Contacts and Pits tab, then use "Locate pits on map" above.'); return; }
 
@@ -2668,7 +2677,7 @@ function promptAddPitToQuote(pitId){
   // already be set to Yards. Base it on the actual matched material's own unit
   // instead, so the right option always shows regardless of that global setting.
   const pit = result ? result.pit : state.pits.find(p=>p.id===pitId);
-  const pitMatches = pit && pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
+  const pitMatches = pit && pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>materialQueryMatches(m.name)) : [];
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
   // Even when the search matched more than one material at this pit (so we can't
   // auto-fill a single material name below), they usually share the same unit —
@@ -2707,7 +2716,7 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   // If exactly one of the searched materials matches this pit, pre-fill it; if
   // the search matched several of the pit's materials, leave it blank rather than
   // guess which one — the rep picks the right one in the quote form below.
-  const pitMatches = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
+  const pitMatches = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>materialQueryMatches(m.name)) : [];
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
   if(matchMaterial) line.material = matchMaterial.name;
   // Truck Capacity per Load (Rate Calculator Settings) doubles as "how much of this
@@ -2753,7 +2762,7 @@ function pitMapResultsInner(){
       <tbody>
         ${shownResults.map(r=>{
           const all = (r.pit.materials||[]).filter(m=>m.name);
-          const matched = pitMapQuery.materials.length ? all.filter(m=>pitMapQuery.materials.includes(m.name)) : all;
+          const matched = pitMapQuery.materials.length ? all.filter(m=>materialQueryMatches(m.name)) : all;
           const shown = matched.slice(0,3);
           const extra = matched.length - shown.length;
           const materialsCell = shown.length
