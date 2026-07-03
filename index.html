@@ -2670,7 +2670,12 @@ function promptAddPitToQuote(pitId){
   const pit = result ? result.pit : state.pits.find(p=>p.id===pitId);
   const pitMatches = pit && pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
-  const perUnitType = (matchMaterial && (matchMaterial.unit==='Tons' || matchMaterial.unit==='Yards')) ? matchMaterial.unit : pitMapCalc.capacityUnit;
+  // Even when the search matched more than one material at this pit (so we can't
+  // auto-fill a single material name below), they usually share the same unit —
+  // e.g. "Fill Dirt" and "A-3 Fill" are both sold by the yard at a given pit — so
+  // still use it for the billing option's unit as long as every match agrees.
+  const matchedUnits = [...new Set(pitMatches.map(m=>m.unit).filter(u=>u==='Tons'||u==='Yards'))];
+  const perUnitType = matchedUnits.length===1 ? matchedUnits[0] : pitMapCalc.capacityUnit;
   const unitLabel = perUnitType.replace(/s$/,'');
   const options = [
     { label:`Per Load — ${calc? fmtMoney(calc.perLoad) : '—'}/load`, value:'Loads' }
@@ -2734,6 +2739,57 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   render();
   window.scrollTo(0,0);
 }
+function pitMapResultsInner(){
+  if(!pitMapResults.length) return '';
+  const maxMi = Number(pitMapQuery.maxMiles)||0;
+  const shownResults = maxMi>0 ? pitMapResults.filter(r=>r.roundTripMiles<=maxMi) : pitMapResults;
+  const hiddenCount = pitMapResults.length - shownResults.length;
+  return `
+    <div class="note" style="margin-top:14px;">Check "Compare" on 2+ pits to see their rate calculators side by side. "Add to Quote" builds (or adds another material to) the quote for the Job Name above — add as many pits/materials as the job needs.${hiddenCount? ` ${hiddenCount} pit(s) beyond ${maxMi} mi round trip are hidden — clear/raise the max distance above to see them.` : ''}</div>
+    ${shownResults.length? `
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Pit</th><th>Materials</th><th>Round-trip Distance</th><th>Round-trip Drive Time</th><th></th></tr></thead>
+      <tbody>
+        ${shownResults.map(r=>{
+          const all = (r.pit.materials||[]).filter(m=>m.name);
+          const matched = pitMapQuery.materials.length ? all.filter(m=>pitMapQuery.materials.includes(m.name)) : all;
+          const shown = matched.slice(0,3);
+          const extra = matched.length - shown.length;
+          const materialsCell = shown.length
+            ? shown.map(m=>`${m.name}: ${fmtPitPrice(m.price, m.unit)}`).join('<br>') + (extra>0? `<br><span style="color:#5C7085;">+${extra} more</span>` : '')
+            : '—';
+          return `<tr ${pitMapSelectedPitIds.has(r.pit.id)?'style="background:var(--steel-100);"':''}>
+          <td><strong>${pitLabel(r.pit)}</strong></td>
+          <td>${materialsCell}</td>
+          <td class="num">${r.roundTripMiles.toFixed(1)} mi</td>
+          <td class="num">${Math.round(r.roundTripMinutes)} min</td>
+          <td style="white-space:nowrap;">
+            <button class="btn ${pitMapSelectedPitIds.has(r.pit.id)?'btn-primary':'btn-ghost'} btn-sm" data-toggle-pit-calc="${r.pit.id}">${pitMapSelectedPitIds.has(r.pit.id)?'✓ Comparing':'Compare'}</button>
+            <button class="btn btn-ghost btn-sm" data-add-to-quote="${r.pit.id}">Add to Quote</button>
+          </td>
+        </tr>`;}).join('')}
+      </tbody>
+    </table>
+    </div>` : ''}
+  `;
+}
+function attachPitMapResultsHandlers(){
+  document.querySelectorAll('[data-toggle-pit-calc]').forEach(b=>b.onclick=()=>{
+    const id = b.dataset.togglePitCalc;
+    const adding = !pitMapSelectedPitIds.has(id);
+    if(adding) pitMapSelectedPitIds.add(id); else pitMapSelectedPitIds.delete(id);
+    render();
+    if(adding) ensurePitRoute(id);
+  });
+  document.querySelectorAll('[data-add-to-quote]').forEach(b=>b.onclick=()=>promptAddPitToQuote(b.dataset.addToQuote));
+}
+function refreshPitMapResults(){
+  const region = document.getElementById('pit-map-results-only');
+  if(!region) return;
+  region.innerHTML = pitMapResultsInner();
+  attachPitMapResultsHandlers();
+}
 function renderPitMapTab(){
   const materials = distinctPitMaterials();
   const missingCount = pitsMissingLocation().length;
@@ -2782,40 +2838,7 @@ function renderPitMapTab(){
       </div>
     </div>
     <button class="btn btn-primary" id="pm-find" style="margin-top:10px;">Find Nearby Pits</button>
-    ${pitMapResults.length? (()=>{
-      const maxMi = Number(pitMapQuery.maxMiles)||0;
-      const shownResults = maxMi>0 ? pitMapResults.filter(r=>r.roundTripMiles<=maxMi) : pitMapResults;
-      const hiddenCount = pitMapResults.length - shownResults.length;
-      return `
-    <div class="note" style="margin-top:14px;">Check "Compare" on 2+ pits to see their rate calculators side by side. "Add to Quote" builds (or adds another material to) the quote for the Job Name above — add as many pits/materials as the job needs.${hiddenCount? ` ${hiddenCount} pit(s) beyond ${maxMi} mi round trip are hidden — clear/raise the max distance above to see them.` : ''}</div>
-    ${shownResults.length? `
-    <div class="tablewrap">
-    <table>
-      <thead><tr><th>Pit</th><th>Materials</th><th>Round-trip Distance</th><th>Round-trip Drive Time</th><th></th></tr></thead>
-      <tbody>
-        ${shownResults.map(r=>{
-          const all = (r.pit.materials||[]).filter(m=>m.name);
-          const matched = pitMapQuery.materials.length ? all.filter(m=>pitMapQuery.materials.includes(m.name)) : all;
-          const shown = matched.slice(0,3);
-          const extra = matched.length - shown.length;
-          const materialsCell = shown.length
-            ? shown.map(m=>`${m.name}: ${fmtPitPrice(m.price, m.unit)}`).join('<br>') + (extra>0? `<br><span style="color:#5C7085;">+${extra} more</span>` : '')
-            : '—';
-          return `<tr ${pitMapSelectedPitIds.has(r.pit.id)?'style="background:var(--steel-100);"':''}>
-          <td><strong>${pitLabel(r.pit)}</strong></td>
-          <td>${materialsCell}</td>
-          <td class="num">${r.roundTripMiles.toFixed(1)} mi</td>
-          <td class="num">${Math.round(r.roundTripMinutes)} min</td>
-          <td style="white-space:nowrap;">
-            <button class="btn ${pitMapSelectedPitIds.has(r.pit.id)?'btn-primary':'btn-ghost'} btn-sm" data-toggle-pit-calc="${r.pit.id}">${pitMapSelectedPitIds.has(r.pit.id)?'✓ Comparing':'Compare'}</button>
-            <button class="btn btn-ghost btn-sm" data-add-to-quote="${r.pit.id}">Add to Quote</button>
-          </td>
-        </tr>`;}).join('')}
-      </tbody>
-    </table>
-    </div>` : ''}
-  `;
-    })() : ''}
+    <div id="pit-map-results-only">${pitMapResultsInner()}</div>
   </div>
 
   ${pitMapSelectedPitIds.size? `
@@ -4838,7 +4861,10 @@ function attachHandlers(){
     pitMapQuery.maxMiles = (document.getElementById('pm-maxmiles')?.value||'');
   };
   const pmMaxMiles = document.getElementById('pm-maxmiles');
-  if(pmMaxMiles) pmMaxMiles.oninput = ()=>{ syncPmFieldsBeforeRerender(); render(); };
+  // Partial refresh only (not a full render()) — a full render also reinitializes the
+  // Leaflet map on this tab, which was yanking the page's scroll position back up to
+  // the map on every single keystroke while typing a number here.
+  if(pmMaxMiles) pmMaxMiles.oninput = ()=>{ pitMapQuery.maxMiles = pmMaxMiles.value; refreshPitMapResults(); };
   const addPmMaterial = ()=>{
     const val = (pmMaterialInput?.value||'').trim();
     if(!val) return;
@@ -4854,14 +4880,7 @@ function attachHandlers(){
     syncPmFieldsBeforeRerender();
     render();
   });
-  document.querySelectorAll('[data-toggle-pit-calc]').forEach(b=>b.onclick=()=>{
-    const id = b.dataset.togglePitCalc;
-    const adding = !pitMapSelectedPitIds.has(id);
-    if(adding) pitMapSelectedPitIds.add(id); else pitMapSelectedPitIds.delete(id);
-    render();
-    if(adding) ensurePitRoute(id);
-  });
-  document.querySelectorAll('[data-add-to-quote]').forEach(b=>b.onclick=()=>promptAddPitToQuote(b.dataset.addToQuote));
+  attachPitMapResultsHandlers();
   const refreshPitMapCalc = ()=>{
     const out = document.getElementById('pm-compare-output');
     if(out) out.innerHTML = renderPitMapCompareHTML();
