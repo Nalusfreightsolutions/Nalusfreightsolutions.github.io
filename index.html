@@ -1406,6 +1406,15 @@ async function fetchStateFromSupabase(){
   state.invoiceCounter = invoiceCounter;
 }
 
+// Tracks whether loadState() has actually finished populating `state` from
+// Supabase. persist() refuses to run before this is true — every table sync is a
+// "delete anything not in the current in-memory list" diff against the database,
+// so calling it while `state` is still incomplete (e.g. right after a fresh page
+// load, before the fetch resolves) would wipe out real rows that just hadn't been
+// loaded into memory yet. This isn't reachable through normal UI use (nothing is
+// even clickable until render() has run at the end of loadState()), but it's cheap,
+// real insurance against exactly that failure mode from any other code path.
+let initialLoadComplete = false;
 async function loadState(){
   try{
     const { count, error } = await sbClient.from('pits').select('id', {count:'exact', head:true});
@@ -1422,11 +1431,16 @@ async function loadState(){
     const main = document.getElementById('main');
     if(main) main.insertAdjacentHTML('afterbegin', `<div style="background:#FDEDEC;border:1.5px solid var(--bad-500);color:var(--bad-500);padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:13px;"><strong>Could not connect to the database:</strong> ${((e&&e.message)||e+'').replace(/</g,'&lt;')}. Check your internet connection and reload.</div>`);
   }
+  initialLoadComplete = true;
   render();
 }
 
 let saveTimer = null;
 function persist(){
+  if(!initialLoadComplete){
+    console.error('persist() called before initial data load finished — refusing to save to avoid wiping unloaded data. This should never happen through normal use of the app.');
+    return;
+  }
   document.getElementById('savetext').textContent = 'Saving…';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async ()=>{
