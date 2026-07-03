@@ -2613,14 +2613,24 @@ async function findNearbyPits(){
     if(!res.ok) throw new Error('request failed ('+res.status+').');
     const data = await res.json();
     const distances = data.distances[0], durations = data.durations[0];
-    pitMapResults = candidates.map((p,i)=>({
-      pit:p,
-      roundTripMiles: distances[i]*2,
-      roundTripMinutes: (durations[i]/60)*2
-    })).sort((a,b)=>a.roundTripMiles-b.roundTripMiles);
+    // OpenRouteService returns null (not an error) for a source/destination pair it
+    // can't find a road route between — usually the job address landed somewhere the
+    // routing graph can't connect to (too vague an address, water, an unmapped area).
+    // null*2 silently evaluates to 0, which used to show as a misleading "0 mi / $0.00"
+    // instead of flagging the real problem — so drop unroutable pits instead.
+    const unroutableCount = candidates.filter((_,i)=>distances[i]==null || durations[i]==null).length;
+    pitMapResults = candidates
+      .map((p,i)=>({ pit:p, roundTripMiles: distances[i]*2, roundTripMinutes: (durations[i]/60)*2 }))
+      .filter((_,i)=>distances[i]!=null && durations[i]!=null)
+      .sort((a,b)=>a.roundTripMiles-b.roundTripMiles);
     pitMapSelectedPitIds = new Set();
     pitMapJobLocation = jobLoc;
     pitMapRoutes = {};
+    if(!pitMapResults.length){
+      alert('OpenRouteService couldn\'t find a driving route from that address to any pit. This usually means the address is too vague or landed somewhere the map can\'t connect to a road — try a fuller street address (house/lot number, street, city, state).');
+    } else if(unroutableCount){
+      alert(`Heads up: ${unroutableCount} pit(s) couldn't be reached by road from that address and were left out of the results below.`);
+    }
   }catch(e){
     alert('Distance lookup failed: '+e.message);
   }
