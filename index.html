@@ -2705,11 +2705,24 @@ function addPitMapMaterialToQuote(pitId, billUnit, calc){
   const pitMatches = pitMapQuery.materials.length ? (pit.materials||[]).filter(m=>pitMapQuery.materials.includes(m.name)) : [];
   const matchMaterial = pitMatches.length===1 ? pitMatches[0] : null;
   if(matchMaterial) line.material = matchMaterial.name;
-  if(billUnit==='Loads'){ line.truckingCost = calc? +calc.perLoad.toFixed(2) : ''; }
-  else if(billUnit==='Hours'){ line.truckingCost = calc? +calc.perHour.toFixed(2) : ''; }
+  // Truck Capacity per Load (Rate Calculator Settings) doubles as "how much of this
+  // material's own unit fits in one load" — same assumption the Per-[Unit] billing
+  // label already relies on — so it's also what converts the catalog $/unit price
+  // into an equivalent $/load or $/hour material cost below.
+  const capacity = Number(pitMapCalc.capacity)||0;
+  const catalogPrice = matchMaterial && matchMaterial.price!=='' && matchMaterial.price!=null ? Number(matchMaterial.price) : null;
+  if(billUnit==='Loads'){
+    line.truckingCost = calc? +calc.perLoad.toFixed(2) : '';
+    if(catalogPrice!=null && capacity) line.price = +(catalogPrice * capacity).toFixed(2);
+  }
+  else if(billUnit==='Hours'){
+    line.truckingCost = calc? +calc.perHour.toFixed(2) : '';
+    const hours = Number(pitMapCalc.hours)||0;
+    if(catalogPrice!=null && capacity && hours && calc) line.price = +(catalogPrice * capacity * (calc.loadsPerDay/hours)).toFixed(2);
+  }
   else{
     line.truckingCost = calc && calc.perUnit!=null ? +calc.perUnit.toFixed(2) : '';
-    if(matchMaterial) line.price = matchMaterial.price || ''; // catalog $/unit only applies when billing by the same unit
+    if(matchMaterial) line.price = matchMaterial.price || ''; // catalog $/unit already matches the billing unit here
   }
   line.truckingMode = 'perUnit';
   q.materials.push(line);
