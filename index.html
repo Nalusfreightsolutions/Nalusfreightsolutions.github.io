@@ -927,6 +927,7 @@ function wireFormDraftFields(fieldMap, draft){
 let salesTeamSubtab = 'quotes';
 let currentLoadCompany = 'NNL';
 let currentWeekEnding = nextFriday();
+let weeklyRange = { start:'', end:'' };
 let loadsFilterText = { NNL:'', NFS:'' };
 let loadsSortConfig = { NNL:{key:'date',dir:'desc'}, NFS:{key:'date',dir:'desc'} };
 function mkDefaultLoadFilters(){ return { status:'All', driver:'All', truck:'All', party:'All', datePaid:'All', dateFrom:'', dateTo:'' }; }
@@ -3442,8 +3443,11 @@ function renderSalesJobsSection(){
 
 /* ============================= WEEKLY TAB ============================= */
 function renderWeeklyTab(){
-  const wk = currentWeekEnding;
-  const wkLoadsAll = state.loads.filter(l=>weekEndingFriday(l.date)===wk);
+  if(!weeklyRange.start || !weeklyRange.end){
+    weeklyRange = { start: addDays(currentWeekEnding,-4), end: currentWeekEnding };
+  }
+  const { start, end } = weeklyRange;
+  const wkLoadsAll = state.loads.filter(l=> l.date && l.date>=start && l.date<=end);
   const nnl = wkLoadsAll.filter(l=>l.company==='NNL');
   const nfs = wkLoadsAll.filter(l=>l.company==='NFS');
 
@@ -3461,9 +3465,9 @@ function renderWeeklyTab(){
 
   function groupTable(groupObj, revKey, payKey, netKey, nameLabel, company){
     const entries = Object.entries(groupObj);
-    if(!entries.length) return `<div class="empty">No loads this week yet.</div>`;
+    if(!entries.length) return `<div class="empty">No loads in this range yet.</div>`;
     return `<div class="tablewrap"><table><thead><tr><th>${nameLabel}</th><th># Loads</th><th>Revenue</th><th>Driver Pay</th><th>Net</th><th></th></tr></thead><tbody>
-      ${entries.map(([name,items])=>`<tr><td><strong>${name}</strong></td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'revenue'))}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td><td class="num">${fmtMoney(sum(items,'net'))}</td><td><button class="btn btn-primary btn-sm" data-invoice="${company}|${encodeURIComponent(name)}">Print Invoice</button></td></tr>`).join('')}
+      ${entries.map(([name,items])=>`<tr><td><strong>${name}</strong></td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'revenue'))}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td><td class="num">${fmtMoney(sum(items,'net'))}</td><td><button class="btn btn-primary btn-sm" data-invoice="${company}|${encodeURIComponent(name)}|${start}|${end}">Print Invoice</button></td></tr>`).join('')}
     </tbody></table></div>`;
   }
 function driverComplianceFlag(driverName){
@@ -3480,27 +3484,29 @@ function driverNameCell(driverName){
 }
 function driverTable(groupObj){
     const entries = Object.entries(groupObj);
-    if(!entries.length) return `<div class="empty">No loads this week yet.</div>`;
+    if(!entries.length) return `<div class="empty">No loads in this range yet.</div>`;
     return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th></tr></thead><tbody>
       ${entries.map(([name,items])=>{
         const companies = [...new Set(items.map(i=>i.company))].join(' + ');
         return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td></tr>`;
       }).join('')}
-      <tr class="grouprow"><td colspan="3">TOTAL PAYROLL THIS WEEK</td><td class="num">${fmtMoney(totalPayroll)}</td></tr>
+      <tr class="grouprow"><td colspan="3">TOTAL PAYROLL FOR THIS RANGE</td><td class="num">${fmtMoney(totalPayroll)}</td></tr>
     </tbody></table></div>`;
   }
 
   return `
   <div class="pagehead">
     <h1>Weekly Invoice &amp; Payroll</h1>
-    <p>Your Friday routine — pick the week, see exactly who to invoice and who to pay. Groups automatically, nothing to retype.</p>
+    <p>Pick any date range to see exactly who to invoice and who to pay. Groups automatically, nothing to retype.</p>
   </div>
 
   <div class="weekpick">
-    <button class="weekbtn" id="wk-prev">◀ Prev Week</button>
-    <input type="date" id="wk-picker" value="${wk}">
-    <button class="weekbtn" id="wk-next">Next Week ▶</button>
-    <span style="font-size:12px; color:#5C7085;">Week ending Friday ${fmtDate(wk)}</span>
+    <button class="weekbtn" id="wk-prev">◀ Prev</button>
+    <span style="font-size:12px; color:#5C7085;">From</span>
+    <input type="date" id="wk-start" value="${start}">
+    <span style="font-size:12px; color:#5C7085;">To</span>
+    <input type="date" id="wk-end" value="${end}">
+    <button class="weekbtn" id="wk-next">Next ▶</button>
   </div>
 
   <div class="sectiontitle">Nalu Nui Logistics — Invoice by Broker</div>
@@ -3509,7 +3515,7 @@ function driverTable(groupObj){
   <div class="sectiontitle">Nalu's Freight Solutions — Invoice by Client</div>
   <div class="card">${groupTable(nfsByClient,'revenue','driverPay','net','Client','NFS')}</div>
 
-  <div class="sectiontitle">Driver Payroll — This Week</div>
+  <div class="sectiontitle">Driver Payroll — This Range</div>
   <div class="card">${driverTable(allDrivers)}</div>
 
   <div class="sectiontitle">Overall Check</div>
@@ -3519,7 +3525,7 @@ function driverTable(groupObj){
       <div><div style="font-size:12px;color:#5C7085;">Total Driver Pay + Company Net</div><div class="num" style="font-size:18px;font-weight:700;">${fmtMoney(totalPayNet)}</div></div>
     </div>
     <div class="balancebar ${balanced?'ok':'bad'}">
-      <span>${balanced? 'Everything Balances ✓' : 'Mismatch — check load entries for this week'}</span>
+      <span>${balanced? 'Everything Balances ✓' : 'Mismatch — check load entries for this range'}</span>
       <span>${fmtMoney(totalInvoiced)}</span>
     </div>
   </div>
@@ -4948,12 +4954,14 @@ function attachHandlers(){
   if(tmFilter) tmFilter.onchange = ()=>{ truckMaintenanceFilter = tmFilter.value; render(); };
 
   // Weekly nav
-  const wkPicker = document.getElementById('wk-picker');
-  if(wkPicker) wkPicker.onchange = ()=>{ currentWeekEnding = weekEndingFriday(wkPicker.value); render(); };
+  const wkStart = document.getElementById('wk-start');
+  if(wkStart) wkStart.onchange = ()=>{ weeklyRange.start = wkStart.value; render(); };
+  const wkEnd = document.getElementById('wk-end');
+  if(wkEnd) wkEnd.onchange = ()=>{ weeklyRange.end = wkEnd.value; render(); };
   const wkPrev = document.getElementById('wk-prev');
-  if(wkPrev) wkPrev.onclick = ()=>{ const d=new Date(currentWeekEnding+'T00:00:00'); d.setDate(d.getDate()-7); currentWeekEnding=d.toISOString().slice(0,10); render(); };
+  if(wkPrev) wkPrev.onclick = ()=>{ weeklyRange.start = addDays(weeklyRange.start,-7); weeklyRange.end = addDays(weeklyRange.end,-7); render(); };
   const wkNext = document.getElementById('wk-next');
-  if(wkNext) wkNext.onclick = ()=>{ const d=new Date(currentWeekEnding+'T00:00:00'); d.setDate(d.getDate()+7); currentWeekEnding=d.toISOString().slice(0,10); render(); };
+  if(wkNext) wkNext.onclick = ()=>{ weeklyRange.start = addDays(weeklyRange.start,7); weeklyRange.end = addDays(weeklyRange.end,7); render(); };
 
   // Annual
   document.querySelectorAll('.annual-item,.annual-amount,.annual-due,.annual-status').forEach(inp=>{
@@ -5075,8 +5083,8 @@ function attachHandlers(){
 
   // Invoice buttons
   document.querySelectorAll('[data-invoice]').forEach(b=>b.onclick=()=>{
-    const [company, partyEnc] = b.dataset.invoice.split('|');
-    openInvoice(company, decodeURIComponent(partyEnc));
+    const [company, partyEnc, startDate, endDate] = b.dataset.invoice.split('|');
+    openInvoice(company, decodeURIComponent(partyEnc), {startDate, endDate});
   });
 
   // Excel export
