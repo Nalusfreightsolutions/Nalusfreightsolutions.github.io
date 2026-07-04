@@ -959,7 +959,7 @@ function hideDataSafetyWarning(){
 document.getElementById('safety-banner-dismiss').onclick = hideDataSafetyWarning;
 
 function mkEmptyTicketRow(defaults){ return { ticket:'', truck:(defaults&&defaults.truck)||'', driver:(defaults&&defaults.driver)||'', qty:'' }; }
-function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', material:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverPay:'', status:'Pending' }; }
+function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', material:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverPay:'', status:'Pending', sameTruckDriver:false, sharedTruck:'', sharedDriver:'' }; }
 let jobShared = { NNL: mkDefaultJobShared(), NFS: mkDefaultJobShared() };
 let jobTicketRows = { NNL: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()], NFS: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()] };
 
@@ -1791,6 +1791,16 @@ function renderJobTicketForm(company){
     </div>
 
     <div class="sectiontitle" style="margin-top:18px;">Tickets for this job</div>
+    <label style="display:flex; align-items:center; gap:7px; font-size:13px; margin-bottom:10px; cursor:pointer;">
+      <input type="checkbox" id="js-sametruckdriver" ${s.sameTruckDriver?'checked':''}>
+      Same truck &amp; driver for every ticket
+    </label>
+    ${s.sameTruckDriver ? `
+    <div class="formgrid loadform-fixed" style="margin-bottom:12px;">
+      <div class="field"><label>Truck #</label><input type="text" id="js-sharedtruck" value="${s.sharedTruck||''}"></div>
+      <div class="field"><label>Driver</label><input type="text" id="js-shareddriver" list="driver-list-${company}" value="${s.sharedDriver||''}"></div>
+    </div>
+    ` : ''}
     <div id="job-ticket-rows-${company}">${jobTicketRowsInner(company)}</div>
     <button class="btn btn-ghost btn-sm" id="job-add-row-${company}" style="margin-top:10px;">+ Add Another Ticket</button>
 
@@ -1805,16 +1815,19 @@ function jobTicketRowsInner(company){
   const rows = jobTicketRows[company];
   const s = jobShared[company];
   const rate = Number(s.rate)||0;
+  const shared = s.sameTruckDriver;
   return `
     <div class="tablewrap">
     <table>
-      <thead><tr><th>Ticket #</th><th>Truck #</th><th>Driver</th><th>Quantity</th><th>Revenue Preview</th><th></th></tr></thead>
+      <thead><tr><th>Ticket #</th>${shared?'':'<th>Truck #</th><th>Driver</th>'}<th>Quantity</th><th>Revenue Preview</th><th></th></tr></thead>
       <tbody>
         ${rows.map((r,idx)=>`
           <tr>
             <td><input type="text" id="jt-ticket-${company}-${idx}" value="${r.ticket}" style="width:90px; border:1px solid var(--steel-200); border-radius:5px; padding:6px 8px;"></td>
+            ${shared?'':`
             <td><input type="text" id="jt-truck-${company}-${idx}" value="${r.truck}" style="width:90px; border:1px solid var(--steel-200); border-radius:5px; padding:6px 8px;"></td>
             <td><input type="text" id="jt-driver-${company}-${idx}" list="driver-list-${company}" value="${r.driver}" style="width:110px; border:1px solid var(--steel-200); border-radius:5px; padding:6px 8px;"></td>
+            `}
             <td><input type="number" step="0.01" id="jt-qty-${company}-${idx}" value="${r.qty}" style="width:90px; border:1px solid var(--steel-200); border-radius:5px; padding:6px 8px;"></td>
             <td class="num">${r.qty? fmtMoney(Number(r.qty)*rate) : '—'}</td>
             <td><button class="btn btn-danger btn-sm" data-remove-ticket-row="${idx}">✕</button></td>
@@ -1857,7 +1870,8 @@ function refreshRevenuePreview(company, idx){
   if(!row) return;
   const rate = Number(jobShared[company].rate)||0;
   const qty = Number(jobTicketRows[company][idx].qty)||0;
-  const cell = row.querySelector('td:nth-child(5)');
+  const previewCol = jobShared[company].sameTruckDriver ? 3 : 5;
+  const cell = row.querySelector(`td:nth-child(${previewCol})`);
   if(cell) cell.textContent = qty ? fmtMoney(qty*rate) : '—';
 }
 function refreshAllRevenuePreviews(company){
@@ -1876,6 +1890,13 @@ function attachJobSharedHandlers(company){
   bind('js-paymenttype','paymentType');
   bind('js-rate','rate', ()=>refreshAllRevenuePreviews(company));
   bind('js-driverpay','driverPay'); bind('js-status','status');
+  bind('js-sharedtruck','sharedTruck'); bind('js-shareddriver','sharedDriver');
+
+  const sameTruckDriverBox = document.getElementById('js-sametruckdriver');
+  if(sameTruckDriverBox) sameTruckDriverBox.onchange = ()=>{
+    s.sameTruckDriver = sameTruckDriverBox.checked;
+    refreshJobTicketCard(company);
+  };
 
   const addRowBtn = document.getElementById('job-add-row-'+company);
   if(addRowBtn) addRowBtn.onclick = ()=>{
@@ -1915,7 +1936,9 @@ function saveAllTickets(company){
   validRows.forEach(r=>{
     const l = {
       id: uid(), company, date: s.date, party: s.party, ticket: r.ticket,
-      truck: r.truck, driver: r.driver, paymentType: s.paymentType, qty: r.qty, rate: s.rate,
+      truck: s.sameTruckDriver ? s.sharedTruck : r.truck,
+      driver: s.sameTruckDriver ? s.sharedDriver : r.driver,
+      paymentType: s.paymentType, qty: r.qty, rate: s.rate,
       status: s.status, invoiceNum:'', datePaid:'', notes:''
     };
     if(company==='NNL'){
