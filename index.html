@@ -3615,6 +3615,56 @@ let reportsFilterNNL = { year:new Date().getFullYear(), view:'quarterly' };
 let reportsFilterNFS = { year:new Date().getFullYear(), view:'quarterly' };
 let reportChartInstances = {};
 
+let truckReportFilter = {
+  NNL: { truck:'', start:'', end:'' },
+  NFS: { truck:'', start:'', end:'' }
+};
+function distinctTrucks(company){
+  const s = new Set();
+  loadsFor(company).forEach(l=>{ if(l.truck) s.add(l.truck.trim()); });
+  state.expenses.filter(e=>e.company===company).forEach(e=>{ if(e.truck) s.add(e.truck.trim()); });
+  return [...s].sort((a,b)=>a.localeCompare(b));
+}
+function computeTruckReport(company, truck, start, end){
+  const inRange = d => !!d && (!start || d>=start) && (!end || d<=end);
+  const loads = loadsFor(company).filter(l=>l.truck===truck && inRange(l.date));
+  const expenses = state.expenses.filter(e=>e.company===company && e.truck===truck && inRange(e.date));
+  const income = sum(loads,'revenue');
+  const driverPay = sum(loads,'driverPay');
+  const gas = sum(expenses.filter(e=>e.category==='Diesel'),'amount');
+  const additional = sum(expenses.filter(e=>e.category!=='Diesel'),'amount');
+  const net = income - driverPay - gas - additional;
+  return { loadCount:loads.length, income, driverPay, gas, additional, net };
+}
+function renderTruckReportCard(company){
+  const f = truckReportFilter[company];
+  const trucks = distinctTrucks(company);
+  const hasSelection = f.truck && f.start && f.end;
+  const r = hasSelection ? computeTruckReport(company, f.truck, f.start, f.end) : null;
+  return `
+  <div class="card">
+    <h2>Per-Truck Report <span class="tag">Pick a truck and a date range</span></h2>
+    <div class="formgrid" style="grid-template-columns:repeat(3,minmax(140px,1fr));">
+      <div class="field"><label>Truck #</label><select id="tr-truck-${company}">
+        <option value="">Choose a truck…</option>
+        ${trucks.map(t=>`<option value="${t}" ${f.truck===t?'selected':''}>${t}</option>`).join('')}
+      </select></div>
+      <div class="field"><label>From</label><input type="date" id="tr-start-${company}" value="${f.start}"></div>
+      <div class="field"><label>To</label><input type="date" id="tr-end-${company}" value="${f.end}"></div>
+    </div>
+    ${!trucks.length ? `<div class="empty">No trucks found yet — Truck # is logged on Loads and Expenses.</div>` :
+      !hasSelection ? `<div class="empty">Pick a truck and both dates to see its numbers for that range.</div>` : `
+    <div class="statgrid">
+      <div class="stat"><div class="label">Income (${r.loadCount} load${r.loadCount===1?'':'s'})</div><div class="value">${fmtMoney(r.income)}</div></div>
+      <div class="stat"><div class="label">Gas Expenses</div><div class="value">${fmtMoney(r.gas)}</div></div>
+      <div class="stat"><div class="label">Driver Pay</div><div class="value">${fmtMoney(r.driverPay)}</div></div>
+      <div class="stat"><div class="label">Additional Expenses</div><div class="value">${fmtMoney(r.additional)}</div></div>
+      <div class="stat amber"><div class="label">Net for Truck ${f.truck}</div><div class="value">${fmtMoney(r.net)}</div></div>
+    </div>
+    `}
+  </div>`;
+}
+
 const EXPENSE_TAX_CATEGORY = {
   'Diesel':'Car & Truck Expenses (Sch. C Line 9)',
   'Tolls':'Car & Truck Expenses (Sch. C Line 9)',
@@ -3816,6 +3866,8 @@ function renderCompanyReportsTab(company){
 
   ${company==='NFS' ? renderNfsSalesReportCard(year) : ''}
 
+  ${renderTruckReportCard(company)}
+
   ${view==='quarterly' ? `
   <div class="card">
     <h2>Revenue vs. Expenses vs. Net — By Quarter <span class="tag">${year} · ${company}</span></h2>
@@ -3978,9 +4030,8 @@ function unitLabel(paymentType){
   return {'Per Ton':'ton(s)','Per Yard':'yard(s)','Per Load':'load(s)','Per Hour':'hour(s)'}[paymentType] || 'unit(s)';
 }
 
-function buildInvoiceHTML(company, party, week){
-  const items = state.loads.filter(l=>l.company===company && l.party===party && weekEndingFriday(l.date)===week)
-                            .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+function buildInvoiceHTML(company, party, opts){
+  const items = invoiceItemsFor(company, party, opts).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   if(!items.length) return null;
 
   let invNum = items[0].invoiceNum;
@@ -3992,8 +4043,9 @@ function buildInvoiceHTML(company, party, week){
   }
 
   const biz = BUSINESS_INFO[company];
-  const weekStart = addDays(week, -4);
-  const dueDate = addDays(week, 7);
+  const rangeStart = opts.startDate || items[0].date;
+  const rangeEnd = opts.endDate || items[items.length-1].date;
+  const dueDate = addDays(rangeEnd, 7);
   const total = sum(items,'revenue');
 
   const rows = items.map(l=>{
@@ -4019,7 +4071,7 @@ function buildInvoiceHTML(company, party, week){
         <div class="inv-title">INVOICE</div>
         <div class="inv-meta">
           Invoice #: <strong>${invNum}</strong><br>
-          Date Issued: <strong>${fmtDate(week)}</strong><br>
+          Date Issued: <strong>${fmtDate(rangeEnd)}</strong><br>
           Payment Due: <strong>${fmtDate(dueDate)}</strong>
         </div>
       </div>
@@ -4028,7 +4080,7 @@ function buildInvoiceHTML(company, party, week){
       <div class="lbl">Bill To</div>
       <div class="name">${party}</div>
     </div>
-    <div style="font-size:12px;color:#5C7085;margin-bottom:14px;">Week of ${fmtDate(weekStart)} – ${fmtDate(week)}</div>
+    <div style="font-size:12px;color:#5C7085;margin-bottom:14px;">${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}</div>
     <table>
       <thead><tr><th>Date</th><th>Ticket #</th><th>Customer</th><th>Job Name</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -4042,7 +4094,7 @@ function buildInvoiceHTML(company, party, week){
       <strong>Payment Terms:</strong> Net 7 — due ${fmtDate(dueDate)}.<br>
       Thank you for your business.
     </div>`;
-  return { html, invNum, total, dueDate, weekStart };
+  return { html, invNum, total, dueDate, rangeStart, rangeEnd };
 }
 
 /* ============================= QUOTE PRINTING ============================= */
@@ -4151,11 +4203,19 @@ function openQuoteListPrint(rows, title, subtitle){
   document.getElementById('inv-print').onclick = ()=>window.print();
 }
 
-function invoiceTextFor(company, party, week){
-  const items = state.loads.filter(l=>l.company===company && l.party===party && weekEndingFriday(l.date)===week);
+function weekRange(week){ return { startDate: addDays(week,-4), endDate: week }; }
+function invoiceItemsFor(company, party, opts){
+  if(opts.invoiceNum) return state.loads.filter(l=>l.invoiceNum===opts.invoiceNum);
+  return state.loads.filter(l=>l.company===company && l.party===party && l.date>=opts.startDate && l.date<=opts.endDate);
+}
+
+function invoiceTextFor(company, party, opts){
+  const items = invoiceItemsFor(company, party, opts).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   if(!items.length) return null;
   const biz = BUSINESS_INFO[company];
-  const dueDate = addDays(week,7), weekStart = addDays(week,-4);
+  const rangeStart = opts.startDate || items[0].date;
+  const rangeEnd = opts.endDate || items[items.length-1].date;
+  const dueDate = addDays(rangeEnd,7);
   const invNum = items[0].invoiceNum || '(not yet generated — click Print first)';
   const lines = items.map(l=>{
     const customer = (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
@@ -4164,18 +4224,19 @@ function invoiceTextFor(company, party, week){
   const total = sum(items,'revenue');
   return [
     `${biz.name}`, ...(biz.sub? [biz.sub] : []), `${biz.address}  ·  ${biz.phone}`, '',
-    `INVOICE #${invNum}`, `Date Issued: ${fmtDate(week)}`, `Payment Due: ${fmtDate(dueDate)}`, '',
-    `Bill To: ${party}`, `Week of ${fmtDate(weekStart)} – ${fmtDate(week)}`, '',
+    `INVOICE #${invNum}`, `Date Issued: ${fmtDate(rangeEnd)}`, `Payment Due: ${fmtDate(dueDate)}`, '',
+    `Bill To: ${party}`, `${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}`, '',
     ...lines, '',
     `TOTAL DUE: ${fmtMoney(total)}`, '',
     `Payment Terms: Net 7 — due ${fmtDate(dueDate)}.`, `Thank you for your business.`
   ].join('\n');
 }
 
-function openInvoice(company, party, week){
-  week = week || currentWeekEnding;
-  const built = buildInvoiceHTML(company, party, week);
-  if(!built){ alert('No loads found for '+party+' that week.'); return; }
+function openInvoice(company, party, opts){
+  if(!opts) opts = weekRange(currentWeekEnding);
+  else if(typeof opts === 'string') opts = weekRange(opts);
+  const built = buildInvoiceHTML(company, party, opts);
+  if(!built){ alert('No loads found for '+party+' in that range.'); return; }
   document.getElementById('invoice-modal').innerHTML = `
     <div class="invoice-page">${built.html}</div>
     <div class="modal-actions no-print">
@@ -4190,9 +4251,10 @@ function openInvoice(company, party, week){
 function printAllForWeek(week){
   const combos = [...new Set(state.loads.filter(l=>weekEndingFriday(l.date)===week).map(l=>l.company+'|'+l.party))];
   if(!combos.length){ alert('No loads found for that week.'); return; }
+  const range = weekRange(week);
   const pages = combos.map(c=>{
     const [company, party] = c.split('|');
-    const built = buildInvoiceHTML(company, party, week);
+    const built = buildInvoiceHTML(company, party, range);
     return built ? `<div class="invoice-page">${built.html}</div>` : '';
   }).join('');
   document.getElementById('invoice-modal').innerHTML = `
@@ -4211,9 +4273,11 @@ function closeInvoice(){
   render();
 }
 
-function copyInvoiceText(company, party, week){
-  const text = invoiceTextFor(company, party, week);
-  if(!text){ alert('No loads found for '+party+' that week.'); return; }
+function copyInvoiceText(company, party, opts){
+  if(!opts) opts = weekRange(currentWeekEnding);
+  else if(typeof opts === 'string') opts = weekRange(opts);
+  const text = invoiceTextFor(company, party, opts);
+  if(!text){ alert('No loads found for '+party+' in that range.'); return; }
   navigator.clipboard.writeText(text).then(()=>{
     alert('Invoice copied — paste it into your email.');
   }).catch(()=>{
@@ -4257,7 +4321,8 @@ function renderInvoicesTab(){
       </select></div>
       <div class="field"><label>Broker / Client</label><input type="text" id="iv-party" list="iv-party-list" placeholder="Type or pick a name"></div>
       <datalist id="iv-party-list">${[...allParties.NNL, ...allParties.NFS].map(p=>`<option value="${p}">`).join('')}</datalist>
-      <div class="field"><label>Week Ending (Fri)</label><input type="date" id="iv-week" value="${wk}"></div>
+      <div class="field"><label>From</label><input type="date" id="iv-start" value="${addDays(wk,-4)}"></div>
+      <div class="field"><label>To</label><input type="date" id="iv-end" value="${wk}"></div>
       <div class="field"><button class="btn btn-primary" id="iv-generate">Preview &amp; Print</button></div>
     </div>
   </div>
@@ -4285,8 +4350,8 @@ function renderInvoicesTab(){
             <td class="num">${fmtMoney(inv.total)}</td>
             <td><span class="pill ${inv.status==='Paid'?'paid':inv.status==='Partially Paid'?'invoiced':'pending'}">${inv.status}</span></td>
             <td>
-              <button class="btn btn-ghost btn-sm" data-view-inv="${inv.company}|${encodeURIComponent(inv.party)}|${inv.week}">View / Print</button>
-              <button class="btn btn-ghost btn-sm" data-copy-inv="${inv.company}|${encodeURIComponent(inv.party)}|${inv.week}">Copy Text</button>
+              <button class="btn btn-ghost btn-sm" data-view-inv="${inv.invoiceNum}">View / Print</button>
+              <button class="btn btn-ghost btn-sm" data-copy-inv="${inv.invoiceNum}">Copy Text</button>
             </td>
           </tr>`).join('') : `<tr><td colspan="7"><div class="empty">No invoices generated yet — create one above or print from the Weekly tab.</div></td></tr>`}
       </tbody>
@@ -4935,6 +5000,16 @@ function attachHandlers(){
   const rpViewANFS = document.getElementById('rp-view-annual-NFS');
   if(rpViewANFS) rpViewANFS.onclick = ()=>{ reportsFilterNFS.view='annual'; render(); };
 
+  // Per-Truck Report — NNL & NFS
+  ['NNL','NFS'].forEach(company=>{
+    const truckSel = document.getElementById('tr-truck-'+company);
+    if(truckSel) truckSel.onchange = ()=>{ truckReportFilter[company].truck = truckSel.value; render(); };
+    const startInp = document.getElementById('tr-start-'+company);
+    if(startInp) startInp.onchange = ()=>{ truckReportFilter[company].start = startInp.value; render(); };
+    const endInp = document.getElementById('tr-end-'+company);
+    if(endInp) endInp.onchange = ()=>{ truckReportFilter[company].end = endInp.value; render(); };
+  });
+
   if(activeTab==='reports-nnl') drawReportsCharts('NNL');
   if(activeTab==='reports-nfs') drawReportsCharts('NFS');
   if(activeTab==='salesteam' && salesTeamSubtab==='pitmap') initPitMapLeaflet();
@@ -5058,19 +5133,24 @@ function attachHandlers(){
   if(ivGenerate) ivGenerate.onclick = ()=>{
     const company = document.getElementById('iv-company').value;
     const party = document.getElementById('iv-party').value.trim();
-    const week = weekEndingFriday(document.getElementById('iv-week').value);
+    const startDate = document.getElementById('iv-start').value;
+    const endDate = document.getElementById('iv-end').value;
     if(!party){ alert('Type a broker or client name first.'); return; }
-    openInvoice(company, party, week);
+    if(!startDate || !endDate){ alert('Pick a From and To date first.'); return; }
+    if(startDate > endDate){ alert('The From date must be on or before the To date.'); return; }
+    openInvoice(company, party, {startDate, endDate});
   };
   const ivPrintAll = document.getElementById('iv-printall');
   if(ivPrintAll) ivPrintAll.onclick = ()=> printAllForWeek(currentWeekEnding);
   document.querySelectorAll('[data-view-inv]').forEach(b=>b.onclick=()=>{
-    const [company, partyEnc, week] = b.dataset.viewInv.split('|');
-    openInvoice(company, decodeURIComponent(partyEnc), week);
+    const invoiceNum = b.dataset.viewInv;
+    const inv = getAllInvoices().find(i=>i.invoiceNum===invoiceNum);
+    if(inv) openInvoice(inv.company, inv.party, {invoiceNum});
   });
   document.querySelectorAll('[data-copy-inv]').forEach(b=>b.onclick=()=>{
-    const [company, partyEnc, week] = b.dataset.copyInv.split('|');
-    copyInvoiceText(company, decodeURIComponent(partyEnc), week);
+    const invoiceNum = b.dataset.copyInv;
+    const inv = getAllInvoices().find(i=>i.invoiceNum===invoiceNum);
+    if(inv) copyInvoiceText(inv.company, inv.party, {invoiceNum});
   });
 }
 
