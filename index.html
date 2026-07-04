@@ -1458,9 +1458,13 @@ function persist(){
 function computeLoadFinancials(l){
   const qty = Number(l.qty)||0, rate = Number(l.rate)||0;
   l.revenue = qty*rate;
-  if(l.company==='NNL'){
+  if(l.company==='NNL' && l.driverType!=='Independent Driver'){
+    // Company drivers (the default/majority case): automatic 30% split.
     l.driverPay = +(l.revenue*0.3).toFixed(2);
   } else {
+    // Independent drivers (both companies) and all NFS loads: driver pay is
+    // whatever rate was actually negotiated with them, entered directly —
+    // not a cut of revenue.
     l.driverPay = Number(l.driverPay)||0;
   }
   l.net = +(l.revenue - l.driverPay).toFixed(2);
@@ -1636,7 +1640,7 @@ function renderLoadsTab(company){
     <div class="flexbar">
       <div>
         <h1>${isNNL?'Nalu Nui Logistics':"Nalu's Freight Solutions"} — Loads</h1>
-        <p>${isNNL? 'Broker jobs run by your own trucks. Driver pay is automatic at 30%.' : 'Brokerage jobs — direct or referral — run by company or independent drivers.'}</p>
+        <p>${isNNL? 'Broker jobs run by company or independent drivers. Company drivers pay automatically at 30% of revenue; independent drivers are paid the rate entered under Driver\'s Rate.' : 'Brokerage jobs — direct or referral — run by company or independent drivers.'}</p>
       </div>
       <div style="display:flex; gap:8px;">
         <input type="file" id="import-file-${company}" accept=".xlsx,.xls" style="display:none;">
@@ -1668,6 +1672,11 @@ function renderLoadsTab(company){
       <div class="field"><label>Quantity</label><input type="number" step="0.01" id="lf-qty" value="${f.qty||''}"></div>
       <div class="field"><label>Rate ($)</label><input type="number" step="0.01" id="lf-rate" value="${f.rate||''}"></div>
       <div class="field"><label>Driver</label><input type="text" id="lf-driver" list="driver-list-${company}" value="${f.driver||''}"></div>
+      <div class="field"><label>Driver Type</label><select id="lf-drivertype">
+        <option ${f.driverType!=='Independent Driver'?'selected':''}>Company Driver</option>
+        <option ${f.driverType==='Independent Driver'?'selected':''}>Independent Driver</option>
+      </select></div>
+      <div class="field"><label>Driver's Rate ($)</label><input type="number" step="0.01" id="lf-driverpay" value="${f.driverPay||''}" placeholder="Only used for Independent Driver — Company Driver pays 30% automatically"></div>
       <div class="field"><label>Invoice #</label><input type="text" id="lf-invoicenum" value="${f.invoiceNum||''}"></div>
 
       <div class="field"><label>Payment Status</label><select id="lf-status">
@@ -1744,9 +1753,14 @@ function renderJobTicketForm(company){
       <div class="field"><label>Pit</label><input type="text" id="js-pit" value="${s.pit||''}"></div>
       <div class="field"><label>Customer</label><input type="text" id="js-customer" value="${s.customer||''}"></div>
       <div class="field"><label>Job Name</label><input type="text" id="js-jobname" value="${s.jobName||''}"></div>
+      <div class="field"><label>Driver Type</label><select id="js-drivertype">
+        <option ${s.driverType==='Company Driver'?'selected':''}>Company Driver</option>
+        <option ${s.driverType==='Independent Driver'?'selected':''}>Independent Driver</option>
+      </select></div>
       <div class="field"><label>Payment Type</label><select id="js-paymenttype">
         ${['Per Ton','Per Yard','Per Load','Per Hour'].map(o=>`<option ${s.paymentType===o?'selected':''}>${o}</option>`).join('')}
       </select></div>
+      <div class="field"><label>Driver's Rate ($) per ticket</label><input type="number" step="0.01" id="js-driverpay" value="${s.driverPay}" placeholder="Only used for Independent Driver — Company Driver pays 30% automatically"></div>
       <div class="field"><label>Rate ($) — applies to every ticket</label><input type="number" step="0.01" id="js-rate" value="${s.rate}"></div>
       <div class="field"><label>Payment Status</label><select id="js-status">
         ${['Pending','Invoiced','Paid'].map(o=>`<option ${s.status===o?'selected':''}>${o}</option>`).join('')}
@@ -1905,7 +1919,7 @@ function saveAllTickets(company){
       status: s.status, invoiceNum:'', datePaid:'', notes:''
     };
     if(company==='NNL'){
-      l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName;
+      l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName; l.driverType = s.driverType; l.driverPay = s.driverPay;
     }
     if(company==='NFS'){
       l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverPay = s.driverPay;
@@ -2001,9 +2015,9 @@ function loadsTableInner(company){
 
   const allVisibleSelected = rows.length>0 && rows.every(l=>selectedLoads[company].has(l.id));
   const selTh = `<th style="width:30px;"><input type="checkbox" id="sel-all-${company}" ${allVisibleSelected?'checked':''} title="Select all shown"></th>`;
-  const colcount = (isNNL ? 19 : 21) + 1;
+  const colcount = (isNNL ? 20 : 21) + 1;
   const header = selTh + (isNNL
-    ? `${sh('date','Date')}${sh('party','Broker')}${sh('pit','Pit')}${sh('customer','Customer')}${sh('jobName','Job Name')}${sh('truck','Truck #')}${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('rate','Rate')}${sh('driver','Driver')}${sh('invoiceNum','Invoice #')}${sh('revenue','Revenue')}${sh('driverPay','Driver Pay')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`
+    ? `${sh('date','Date')}${sh('party','Broker')}${sh('pit','Pit')}${sh('customer','Customer')}${sh('jobName','Job Name')}${sh('truck','Truck #')}${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('rate','Rate')}${sh('driver','Driver')}<th>Driver Type</th>${sh('invoiceNum','Invoice #')}${sh('revenue','Revenue')}${sh('driverPay','Driver Pay')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`
     : `${sh('date','Date')}${sh('broker','Broker')}${sh('party','Client')}${sh('jobName','Job Name')}${sh('material','Material')}<th>Job Source</th><th>Driver Type</th>${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('driverPay',"Driver's Rate")}${sh('rate','Rate')}${sh('invoiceNum','Invoice #')}${sh('driver','Driver')}${sh('truck','Truck #')}${sh('revenue','Revenue')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`);
 
   const rowHtml = l => {
@@ -2017,7 +2031,7 @@ function loadsTableInner(company){
     if(isNNL){
       return `<tr${isSel? ' style="background:#FDF6E8;"':''}>
             ${selTd}<td>${fmtDate(l.date)}</td><td>${l.party||''}</td><td>${l.pit||''}</td><td>${l.customer||''}</td><td>${l.jobName||''}</td><td>${l.truck||''}</td>
-            <td class="mono">${l.ticket||''}</td><td>${l.paymentType||''}</td><td class="num">${l.qty||''}</td><td class="num">${fmtMoney(l.rate)}</td><td>${l.driver||''}</td><td class="mono">${l.invoiceNum||''}</td>
+            <td class="mono">${l.ticket||''}</td><td>${l.paymentType||''}</td><td class="num">${l.qty||''}</td><td class="num">${fmtMoney(l.rate)}</td><td>${l.driver||''}</td><td>${l.driverType||'Company Driver'}</td><td class="mono">${l.invoiceNum||''}</td>
             <td class="num">${fmtMoney(l.revenue)}</td><td class="num">${fmtMoney(l.driverPay)}</td><td class="num">${fmtMoney(l.net)}</td>${statusCell}<td>${fmtDate(l.datePaid)}</td><td>${l.notes||''}</td>${actions}
           </tr>`;
     }
@@ -4770,6 +4784,7 @@ function attachHandlers(){
     l.status = get('lf-status'); l.invoiceNum = get('lf-invoicenum'); l.datePaid = get('lf-datepaid'); l.notes = get('lf-notes');
     if(company==='NNL'){
       l.pit = get('lf-pit'); l.customer = get('lf-customer'); l.jobName = get('lf-jobname');
+      l.driverType = get('lf-drivertype'); l.driverPay = get('lf-driverpay');
     }
     if(company==='NFS'){
       l.broker = get('lf-broker'); l.jobName = get('lf-jobname'); l.material = get('lf-material'); l.jobSource = get('lf-jobsource'); l.driverType = get('lf-drivertype');
