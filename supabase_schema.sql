@@ -403,6 +403,26 @@ create trigger loads_touch_updated_at
   before update on loads
   for each row execute function touch_updated_at();
 
+-- ---------- 11b. PAYROLL DEDUCTIONS ----------
+-- Per-driver, per-week deductions (e.g. the $50/week truck wash for company
+-- drivers) shown on the Weekly Invoice & Payroll tab. Owner-only — this tab
+-- isn't reachable by sales_rep accounts, so no sales_rep policy is needed.
+create table payroll_deductions (
+  id text primary key,
+  company text not null check (company in ('NNL','NFS')),
+  driver text not null,
+  week_start date not null,
+  week_end date not null,
+  amount numeric not null default 0,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table payroll_deductions enable row level security;
+
+create policy "owner only payroll_deductions" on payroll_deductions for all
+  using (is_owner()) with check (is_owner());
+
 -- ---------- 13. TABLE-LEVEL GRANTS ----------
 -- "grant all on schema public" earlier only grants schema-level access (USAGE/CREATE).
 -- Postgres also requires explicit table-level privileges before RLS policies even

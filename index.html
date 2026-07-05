@@ -848,7 +848,8 @@ let state = {
     ]
   },
   invoiceCounter: { NNL: 1000, NFS: 1000 },
-  orsApiKey: 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImMxZTdiOTdhOWQyMDRjZmFhMDhiMmNiNGI1MzY5MTdhIiwiaCI6Im11cm11cjY0In0=' // free OpenRouteService API key, used for drive time/distance on the Pit Map tab. Baked in as a default so the app never has to ask for it again — "Change key" still lets you swap it.
+  orsApiKey: 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImMxZTdiOTdhOWQyMDRjZmFhMDhiMmNiNGI1MzY5MTdhIiwiaCI6Im11cm11cjY0In0=', // free OpenRouteService API key, used for drive time/distance on the Pit Map tab. Baked in as a default so the app never has to ask for it again — "Change key" still lets you swap it.
+  payrollDeductions: [] // {id, company, driver, weekStart, weekEnd, amount, note} — per-driver, per-week payroll deductions (e.g. truck wash)
 };
 
 const BUSINESS_INFO = {
@@ -863,6 +864,23 @@ const MAINTENANCE_CATEGORIES = ['Tires','Oil Change','Brakes','Transmission','Tr
 // for the truck-wash payroll deduction below.
 const MY_TRUCKS = ['Nalu Nui - Nelson','Nalu Nui - Edel','Nalu Nui - Carlos','Nalu Nui - Yandier'];
 const TRUCK_WASH_DEDUCTION = 50;
+// Editable per-driver, per-week deductions (any driver, not just company drivers).
+// Defaults to $50/week for the owner's own drivers, $0 for everyone else, until
+// the owner explicitly overrides it for that exact driver + week.
+function getEffectiveDeduction(driver, weekStart, weekEnd){
+  const match = state.payrollDeductions.find(d=> d.driver===driver && d.weekStart===weekStart && d.weekEnd===weekEnd);
+  if(match) return Number(match.amount)||0;
+  return MY_TRUCKS.includes(driver) ? TRUCK_WASH_DEDUCTION : 0;
+}
+function setDeduction(company, driver, weekStart, weekEnd, amount){
+  let d = state.payrollDeductions.find(d=> d.driver===driver && d.weekStart===weekStart && d.weekEnd===weekEnd);
+  if(!d){
+    d = { id:uid(), company, driver, weekStart, weekEnd, amount:0, note:'' };
+    state.payrollDeductions.push(d);
+  }
+  d.amount = Number(amount)||0;
+  persist();
+}
 // One-time migration: the owner's 4 company drivers/trucks used to be logged
 // under plain first names — renaming everywhere to "Nalu Nui - {name}" for clarity.
 const DRIVER_NAME_MIGRATIONS = {
@@ -1085,6 +1103,15 @@ function rowToExpense(r){
     amount:r.amount??'', frequency:r.frequency||'', notes:r.notes||'' };
 }
 
+function payrollDeductionToRow(d){
+  return { id:d.id, company:d.company, driver:d.driver, week_start:d.weekStart, week_end:d.weekEnd,
+    amount:numOrNull(d.amount), note:d.note||null };
+}
+function rowToPayrollDeduction(r){
+  return { id:r.id, company:r.company, driver:r.driver, weekStart:r.week_start, weekEnd:r.week_end,
+    amount:r.amount??0, note:r.note||'' };
+}
+
 function complianceToRow(c){
   return { id:c.id, name:c.name||null, coi_date:c.coiDate||null, w9_year:c.w9Year||null, wc_date:c.wcDate||null, notes:c.notes||null };
 }
@@ -1264,6 +1291,9 @@ async function syncStateToSupabase(){
     {company:'NNL', counter: state.invoiceCounter.NNL||1000},
     {company:'NFS', counter: state.invoiceCounter.NFS||1000}
   ]);
+
+  await upsertTable('payroll_deductions', state.payrollDeductions.map(payrollDeductionToRow));
+  await deleteMissing('payroll_deductions', state.payrollDeductions.map(d=>d.id));
 }
 
 /* ---- attachment files (client/pit/compliance uploads) ----
@@ -1436,6 +1466,17 @@ async function fetchStateFromSupabase(){
   const invoiceCounter = {NNL:1000, NFS:1000};
   (invCounterR.data||[]).forEach(r=>{ invoiceCounter[r.company] = r.counter; });
   state.invoiceCounter = invoiceCounter;
+
+  // Fetched separately: this table may not exist yet if the owner hasn't run the
+  // one-time setup SQL, and a missing table here shouldn't break everything else's load.
+  try{
+    const { data, error } = await sbClient.from('payroll_deductions').select('*');
+    if(error) throw error;
+    state.payrollDeductions = (data||[]).map(rowToPayrollDeduction);
+  }catch(e){
+    console.warn('payroll_deductions not available yet — run the setup SQL to enable editable payroll deductions.', e.message||e);
+    state.payrollDeductions = [];
+  }
 }
 
 // Tracks whether loadState() has actually finished populating `state` from
@@ -3590,16 +3631,16 @@ function driverTable(groupObj){
     let totalNet = 0;
     const bodyRows = entries.map(([name,items])=>{
       const companies = [...new Set(items.map(i=>i.company))].join(' + ');
+      const primaryCompany = items[0].company;
       const owed = sum(items,'driverPay');
-      const isMyDriver = MY_TRUCKS.includes(name);
-      const deduction = isMyDriver ? TRUCK_WASH_DEDUCTION : 0;
+      const deduction = getEffectiveDeduction(name, start, end);
       const netPay = owed - deduction;
       totalNet += netPay;
-      return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(owed)}</td><td class="num">${isMyDriver? '-'+fmtMoney(deduction) : '—'}</td><td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td></tr>`;
+      return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(owed)}</td><td class="num"><input type="number" step="0.01" class="deduction-input" data-driver="${name.replace(/"/g,'&quot;')}" data-company="${primaryCompany}" value="${deduction}" style="width:80px; border:1px solid var(--steel-200); border-radius:5px; padding:5px 7px; text-align:right;"></td><td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td></tr>`;
     }).join('');
-    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Truck Wash</th><th>Net Pay</th></tr></thead><tbody>
+    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th></tr></thead><tbody>
       ${bodyRows}
-      <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after truck wash)</td><td class="num">${fmtMoney(totalNet)}</td></tr>
+      <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td></tr>
     </tbody></table></div>`;
   }
 
@@ -4452,8 +4493,7 @@ function printDriverPayroll(){
     const companies = [...new Set(items.map(i=>i.company))].join(' + ');
     const flag = complianceFlagFor(name);
     const owed = sum(items,'driverPay');
-    const isMyDriver = MY_TRUCKS.includes(name);
-    const deduction = isMyDriver ? TRUCK_WASH_DEDUCTION : 0;
+    const deduction = getEffectiveDeduction(name, start, end);
     const netPay = owed - deduction;
     totalNet += netPay;
     return `
@@ -4462,7 +4502,7 @@ function printDriverPayroll(){
       <td>${companies}</td>
       <td class="num">${items.length}</td>
       <td class="num">${fmtMoney(owed)}</td>
-      <td class="num">${isMyDriver? '-'+fmtMoney(deduction) : '—'}</td>
+      <td class="num">${deduction? '-'+fmtMoney(deduction) : '—'}</td>
       <td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td>
     </tr>`;
   }).join('');
@@ -4478,11 +4518,11 @@ function printDriverPayroll(){
       </div>
     </div>
     <table>
-      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Truck Wash</th><th>Net Pay</th></tr></thead>
+      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
-      <table><tr class="grand"><td>Total Payroll (after truck wash)</td><td class="num">${fmtMoney(totalNet)}</td></tr></table>
+      <table><tr class="grand"><td>Total Payroll (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td></tr></table>
     </div>`;
 
   document.getElementById('invoice-modal').innerHTML = `
@@ -5228,6 +5268,12 @@ function attachHandlers(){
   });
   const printPayrollBtn = document.getElementById('print-payroll-btn');
   if(printPayrollBtn) printPayrollBtn.onclick = printDriverPayroll;
+  document.querySelectorAll('.deduction-input').forEach(inp=>{
+    inp.onchange = ()=>{
+      setDeduction(inp.dataset.company, inp.dataset.driver, weeklyRange.start, weeklyRange.end, inp.value);
+      render();
+    };
+  });
 
   // Annual
   document.querySelectorAll('.annual-item,.annual-amount,.annual-due,.annual-status').forEach(inp=>{
