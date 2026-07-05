@@ -1569,11 +1569,8 @@ function render(){
 /* ============================= OVERDUE ALERTS ============================= */
 function getOverdueInvoices(){
   const today = new Date().toISOString().slice(0,10);
-  const flagged = state.loads.filter(l=>{
-    if(l.status==='Paid' || !l.date) return false;
-    const due = addDays(weekEndingFriday(l.date), 7);
-    return due < today;
-  });
+  // Anything not marked Paid counts as overdue right away — no grace period.
+  const flagged = state.loads.filter(l=> l.status!=='Paid' && l.date);
   const groups = {};
   flagged.forEach(l=>{
     const key = l.company+'|'+l.party;
@@ -1581,23 +1578,23 @@ function getOverdueInvoices(){
     groups[key].items.push(l);
   });
   return Object.values(groups).map(g=>{
-    const dueDates = g.items.map(l=>addDays(weekEndingFriday(l.date),7)).sort();
-    const oldestDue = dueDates[0];
-    const daysOverdue = Math.round((new Date(today)-new Date(oldestDue))/86400000);
-    return { ...g, total: sum(g.items,'revenue'), daysOverdue, oldestDue };
+    const loadDates = g.items.map(l=>l.date).sort();
+    const oldestDate = loadDates[0];
+    const daysOverdue = Math.max(0, Math.round((new Date(today)-new Date(oldestDate))/86400000));
+    return { ...g, total: sum(g.items,'revenue'), daysOverdue, oldestDate };
   }).sort((a,b)=> b.daysOverdue - a.daysOverdue);
 }
 function renderOverdueBanner(){
   const overdue = getOverdueInvoices();
   if(!overdue.length){
-    return `<div class="card"><div class="balancebar ok"><span>All caught up — no invoices overdue 7+ days ✓</span><span></span></div></div>`;
+    return `<div class="card"><div class="balancebar ok"><span>All caught up — nothing outstanding ✓</span><span></span></div></div>`;
   }
   const totalOverdue = sum(overdue,'total');
   return `
   <div class="card" style="border-color:#F3B9B4;">
-    <h2 style="color:var(--bad-500);">⚠ Overdue 7+ Days <span class="tag">${fmtMoney(totalOverdue)} outstanding</span></h2>
+    <h2 style="color:var(--bad-500);">⚠ Overdue — Not Yet Paid <span class="tag">${fmtMoney(totalOverdue)} outstanding</span></h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Company</th><th>Broker / Client</th><th>Days Overdue</th><th>Amount</th></tr></thead>
+      <thead><tr><th>Company</th><th>Broker / Client</th><th>Days Outstanding</th><th>Amount</th></tr></thead>
       <tbody>
         ${overdue.map(o=>`<tr><td>${o.company}</td><td><strong>${o.party}</strong></td><td class="num" style="color:var(--bad-500);font-weight:700;">${o.daysOverdue}d</td><td class="num">${fmtMoney(o.total)}</td></tr>`).join('')}
       </tbody>
