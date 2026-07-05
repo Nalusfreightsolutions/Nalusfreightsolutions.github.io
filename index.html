@@ -3532,6 +3532,10 @@ function renderWeeklyTab(){
   const totalPayNet = nnlPay+nnlNet+nfsPay+nfsNet;
   const balanced = Math.abs(totalInvoiced-totalPayNet) < 0.01;
   const totalPayroll = sum(wkLoadsAll,'driverPay');
+  const mismatchedLoads = wkLoadsAll.filter(l=>{
+    const diff = (Number(l.driverPay)||0) + (Number(l.net)||0) - (Number(l.revenue)||0);
+    return Math.abs(diff) > 0.01;
+  });
 
   function groupTable(groupObj, revKey, payKey, netKey, nameLabel, company){
     const entries = Object.entries(groupObj);
@@ -3598,6 +3602,22 @@ function driverTable(groupObj){
       <span>${balanced? 'Everything Balances ✓' : 'Mismatch — check load entries for this range'}</span>
       <span>${fmtMoney(totalInvoiced)}</span>
     </div>
+    ${!balanced && mismatchedLoads.length ? `
+    <div class="note" style="margin-top:14px; border-color:var(--bad-500,#C0362C);">
+      ⚠ ${mismatchedLoads.length} load(s) below have Driver Pay + Net that don't add up to Revenue — that's the source of the mismatch, not a calculation bug elsewhere.
+    </div>
+    <div class="tablewrap" style="margin-top:10px;">
+      <table>
+        <thead><tr><th>Company</th><th>Date</th><th>${'Broker/Client'}</th><th>Ticket #</th><th>Revenue</th><th>Driver Pay</th><th>Net</th><th>Off By</th><th></th></tr></thead>
+        <tbody>
+          ${mismatchedLoads.map(l=>{
+            const diff = (Number(l.driverPay)||0) + (Number(l.net)||0) - (Number(l.revenue)||0);
+            return `<tr><td>${l.company}</td><td>${fmtDate(l.date)}</td><td>${l.party||l.broker||''}</td><td class="mono">${l.ticket||'—'}</td><td class="num">${fmtMoney(l.revenue)}</td><td class="num">${fmtMoney(l.driverPay)}</td><td class="num">${fmtMoney(l.net)}</td><td class="num" style="color:var(--bad-500,#C0362C); font-weight:700;">${fmtMoney(diff)}</td><td><button class="btn btn-ghost btn-sm" data-edit-mismatch="${l.company}|${l.id}">Edit</button></td></tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
   </div>
   `;
 }
@@ -5096,6 +5116,14 @@ function attachHandlers(){
   if(wkPrev) wkPrev.onclick = ()=>{ weeklyRange.start = addDays(weeklyRange.start,-7); weeklyRange.end = addDays(weeklyRange.end,-7); render(); };
   const wkNext = document.getElementById('wk-next');
   if(wkNext) wkNext.onclick = ()=>{ weeklyRange.start = addDays(weeklyRange.start,7); weeklyRange.end = addDays(weeklyRange.end,7); render(); };
+  document.querySelectorAll('[data-edit-mismatch]').forEach(b=>b.onclick=()=>{
+    const [company, loadId] = b.dataset.editMismatch.split('|');
+    currentLoadCompany = company;
+    editingLoadId = loadId;
+    activeTab = company==='NNL' ? 'nnl' : 'nfs';
+    render();
+    window.scrollTo(0,0);
+  });
 
   // Annual
   document.querySelectorAll('.annual-item,.annual-amount,.annual-due,.annual-status').forEach(inp=>{
