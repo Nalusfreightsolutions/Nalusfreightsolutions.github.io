@@ -2045,6 +2045,9 @@ function bulkBarInner(company){
     <span style="color:#5C7085;">|</span>
     <input type="text" id="bulk-invoice-${company}" placeholder="Invoice #" style="${inp} width:110px;">
     <button class="btn btn-ghost btn-sm" data-bulk-invoice="${company}">Set Invoice #</button>
+    <span style="color:#5C7085;">|</span>
+    <input type="number" step="0.01" id="bulk-driverrate-${company}" placeholder="Driver's Rate ($/unit)" style="${inp} width:150px;">
+    <button class="btn btn-ghost btn-sm" data-bulk-driverrate="${company}">Set Driver's Rate</button>
     <span style="flex:1;"></span>
     <button class="btn btn-danger btn-sm" data-bulk-delete="${company}">Delete selected</button>
     <button class="btn btn-ghost btn-sm" data-bulk-clear="${company}">Clear selection</button>
@@ -4462,6 +4465,15 @@ function attachBulkBarHandlers(company){
     if(!v){ alert('Type an invoice number first.'); return; }
     selectedLoadObjects(company).forEach(l=>{ l.invoiceNum = v; if(l.status==='Pending') l.status='Invoiced'; });
     persist(); refreshLoadsTable(company);
+  };
+  const applyDriverRate = bar.querySelector('[data-bulk-driverrate]');
+  if(applyDriverRate) applyDriverRate.onclick = ()=>{
+    const v = document.getElementById('bulk-driverrate-'+company).value;
+    if(v===''){ alert("Type a Driver's Rate ($/unit) first."); return; }
+    const items = selectedLoadObjects(company);
+    items.forEach(l=>{ l.driverRate = v; computeLoadFinancials(l); });
+    persist(); refreshLoadsTable(company);
+    alert(`Driver's Rate set to $${v}/unit and recalculated for ${items.length} load(s).`);
   };
   const bulkDel = bar.querySelector('[data-bulk-delete]');
   if(bulkDel) bulkDel.onclick = ()=>{
