@@ -1017,6 +1017,7 @@ function weekEndingFriday(dateStr){
 }
 function fmtDate(s){ if(!s) return '—'; const [y,m,d]=s.split('-'); return `${m}/${d}/${y}`; }
 function fmtMoney(n){ n = Number(n)||0; const neg = n<0; n=Math.abs(n); const s = '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); return neg? '('+s+')' : s; }
+function fmtQty(n){ return (Number(n)||0).toFixed(2); }
 
 /* ============================= SUPABASE STORAGE ============================= */
 // Every save/load now goes to a real Postgres database instead of localStorage,
@@ -4136,7 +4137,7 @@ function buildInvoiceHTML(company, party, opts){
       <td class="num">${l.ticket||'—'}</td>
       <td>${customer(l)}</td>
       <td>${jobName}</td>
-      <td class="num">${l.qty||0} ${unitLabel(l.paymentType)}</td>
+      <td class="num">${fmtQty(l.qty)} ${unitLabel(l.paymentType)}</td>
       <td class="num">${fmtMoney(l.rate)}</td>
       <td class="num">${fmtMoney(l.revenue)}</td>
     </tr>`).join('');
@@ -4146,7 +4147,7 @@ function buildInvoiceHTML(company, party, opts){
     const totalRow = `
     <tr class="grouprow">
       <td colspan="4">Total for ${jobName}</td>
-      <td class="num">${qty} ${unit}</td>
+      <td class="num">${fmtQty(qty)} ${unit}</td>
       <td></td>
       <td class="num">${fmtMoney(revenue)}</td>
     </tr>`;
@@ -4313,12 +4314,12 @@ function invoiceTextFor(company, party, opts){
   const lines = Object.entries(jobGroups).flatMap(([jobName, group])=>{
     const ticketLines = group.map(l=>{
       const customer = (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
-      return `${fmtDate(l.date)}  |  Ticket ${l.ticket||'—'}  |  ${customer} · ${jobName}  |  ${l.qty||0} ${unitLabel(l.paymentType)} @ ${fmtMoney(l.rate)}  =  ${fmtMoney(l.revenue)}`;
+      return `${fmtDate(l.date)}  |  Ticket ${l.ticket||'—'}  |  ${customer} · ${jobName}  |  ${fmtQty(l.qty)} ${unitLabel(l.paymentType)} @ ${fmtMoney(l.rate)}  =  ${fmtMoney(l.revenue)}`;
     });
     const qty = sum(group,'qty');
     const revenue = sum(group,'revenue');
     const unit = unitLabel(group[0].paymentType);
-    return [...ticketLines, `Total for ${jobName}: ${qty} ${unit}  =  ${fmtMoney(revenue)}`, ''];
+    return [...ticketLines, `Total for ${jobName}: ${fmtQty(qty)} ${unit}  =  ${fmtMoney(revenue)}`, ''];
   });
   const total = sum(items,'revenue');
   return [
