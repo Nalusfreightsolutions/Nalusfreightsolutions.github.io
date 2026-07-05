@@ -4129,18 +4129,29 @@ function buildInvoiceHTML(company, party, opts){
     (jobGroups[jn] = jobGroups[jn] || []).push(l);
   });
   const rows = Object.entries(jobGroups).map(([jobName, group])=>{
+    const customer = l => (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
+    const ticketRows = group.map(l=>`
+    <tr>
+      <td>${fmtDate(l.date)}</td>
+      <td class="num">${l.ticket||'—'}</td>
+      <td>${customer(l)}</td>
+      <td>${jobName}</td>
+      <td class="num">${l.qty||0} ${unitLabel(l.paymentType)}</td>
+      <td class="num">${fmtMoney(l.rate)}</td>
+      <td class="num">${fmtMoney(l.revenue)}</td>
+    </tr>`).join('');
     const qty = sum(group,'qty');
-    const rates = [...new Set(group.map(l=>Number(l.rate)||0))];
-    const rateDisplay = rates.length===1 ? fmtMoney(rates[0]) : 'Various';
     const revenue = sum(group,'revenue');
     const unit = unitLabel(group[0].paymentType);
-    return `
-    <tr>
-      <td>${jobName}</td>
+    const totalRow = `
+    <tr class="grouprow">
+      <td colspan="4">Total for ${jobName}</td>
       <td class="num">${qty} ${unit}</td>
-      <td class="num">${rateDisplay}</td>
+      <td></td>
       <td class="num">${fmtMoney(revenue)}</td>
-    </tr>`;}).join('');
+    </tr>`;
+    return ticketRows + totalRow;
+  }).join('');
 
   const html = `
     <div class="inv-head">
@@ -4163,7 +4174,7 @@ function buildInvoiceHTML(company, party, opts){
     </div>
     <div style="font-size:12px;color:#5C7085;margin-bottom:14px;">${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}</div>
     <table>
-      <thead><tr><th>Job Name</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+      <thead><tr><th>Date</th><th>Ticket #</th><th>Customer</th><th>Job Name</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
@@ -4299,20 +4310,22 @@ function invoiceTextFor(company, party, opts){
     const jn = l.jobName || '—';
     (jobGroups[jn] = jobGroups[jn] || []).push(l);
   });
-  const lines = Object.entries(jobGroups).map(([jobName, group])=>{
+  const lines = Object.entries(jobGroups).flatMap(([jobName, group])=>{
+    const ticketLines = group.map(l=>{
+      const customer = (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
+      return `${fmtDate(l.date)}  |  Ticket ${l.ticket||'—'}  |  ${customer} · ${jobName}  |  ${l.qty||0} ${unitLabel(l.paymentType)} @ ${fmtMoney(l.rate)}  =  ${fmtMoney(l.revenue)}`;
+    });
     const qty = sum(group,'qty');
-    const rates = [...new Set(group.map(l=>Number(l.rate)||0))];
-    const rateDisplay = rates.length===1 ? fmtMoney(rates[0]) : 'Various';
     const revenue = sum(group,'revenue');
     const unit = unitLabel(group[0].paymentType);
-    return `${jobName}  |  ${qty} ${unit} @ ${rateDisplay}  =  ${fmtMoney(revenue)}`;
+    return [...ticketLines, `Total for ${jobName}: ${qty} ${unit}  =  ${fmtMoney(revenue)}`, ''];
   });
   const total = sum(items,'revenue');
   return [
     `${biz.name}`, ...(biz.sub? [biz.sub] : []), `${biz.phone}`, '',
     `INVOICE #${invNum}`, `Date Issued: ${fmtDate(rangeEnd)}`, `Payment Due: ${fmtDate(dueDate)}`, '',
     `Bill To: ${party}`, `${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}`, '',
-    ...lines, '',
+    ...lines,
     `TOTAL DUE: ${fmtMoney(total)}`
   ].join('\n');
 }
