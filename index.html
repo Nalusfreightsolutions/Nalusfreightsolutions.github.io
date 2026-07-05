@@ -857,6 +857,9 @@ const BUSINESS_INFO = {
 };
 const EXPENSE_CATEGORIES = ['Diesel','Tolls','Insurance','Truck Loan','Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Other'];
 const MAINTENANCE_CATEGORIES = ['Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Truck Repair'];
+// The owner's own company trucks — independent drivers use their own trucks,
+// which aren't tracked here since maintenance on those isn't the company's concern.
+const MY_TRUCKS = ['Nelson','Edel','Carlos','Yandier'];
 let activeTab = 'dashboard';
 let currentUser = null;
 let currentUserRole = null; // 'owner' | 'sales_rep'
@@ -2179,8 +2182,8 @@ function loadsTableInner(company){
 let truckMaintenanceFilter = 'All';
 function getAllTrucks(){
   const s = new Set();
-  state.loads.forEach(l=>{ if(l.truck) s.add(l.truck); });
-  state.expenses.forEach(e=>{ if(e.truck) s.add(e.truck); });
+  state.loads.forEach(l=>{ if(l.truck && MY_TRUCKS.includes(l.truck)) s.add(l.truck); });
+  state.expenses.forEach(e=>{ if(e.truck && MY_TRUCKS.includes(e.truck)) s.add(e.truck); });
   return [...s].sort();
 }
 function maintenanceEventsForTruck(truck){
