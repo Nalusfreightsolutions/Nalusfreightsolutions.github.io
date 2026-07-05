@@ -197,8 +197,8 @@
 
   @media print{
     body *{visibility:hidden;}
-    #invoice-modal, #invoice-modal *{visibility:visible;}
-    #invoice-overlay{position:absolute; inset:auto; background:none; padding:0; display:block !important;}
+    #invoice-overlay, #invoice-modal, #invoice-modal *{visibility:visible;}
+    #invoice-overlay{position:absolute; inset:auto; top:0; left:0; width:100%; overflow:visible; background:none; padding:0; display:block !important;}
     #invoice-modal{position:absolute; top:0; left:0; width:100%; max-width:none; box-shadow:none; border-radius:0;}
     .no-print{display:none !important;}
     .invoice-page:not(:last-child){page-break-after:always;}
@@ -3451,7 +3451,7 @@ function renderSalesJobsSection(){
 /* ============================= WEEKLY TAB ============================= */
 function renderWeeklyTab(){
   if(!weeklyRange.start || !weeklyRange.end){
-    weeklyRange = { start: addDays(currentWeekEnding,-4), end: currentWeekEnding };
+    weeklyRange = { start: addDays(currentWeekEnding,-6), end: currentWeekEnding };
   }
   const { start, end } = weeklyRange;
   const wkLoadsAll = state.loads.filter(l=> l.date && l.date>=start && l.date<=end);
@@ -4216,7 +4216,7 @@ function openQuoteListPrint(rows, title, subtitle){
   document.getElementById('inv-print').onclick = ()=>window.print();
 }
 
-function weekRange(week){ return { startDate: addDays(week,-4), endDate: week }; }
+function weekRange(week){ return { startDate: addDays(week,-6), endDate: week }; }
 function invoiceItemsFor(company, party, opts){
   if(opts.invoiceNum) return state.loads.filter(l=>l.invoiceNum===opts.invoiceNum);
   return state.loads.filter(l=>l.company===company && l.party===party && l.date>=opts.startDate && l.date<=opts.endDate);
@@ -4334,7 +4334,7 @@ function renderInvoicesTab(){
       </select></div>
       <div class="field"><label>Broker / Client</label><input type="text" id="iv-party" list="iv-party-list" placeholder="Type or pick a name"></div>
       <datalist id="iv-party-list">${[...allParties.NNL, ...allParties.NFS].map(p=>`<option value="${p}">`).join('')}</datalist>
-      <div class="field"><label>From</label><input type="date" id="iv-start" value="${addDays(wk,-4)}"></div>
+      <div class="field"><label>From</label><input type="date" id="iv-start" value="${addDays(wk,-6)}"></div>
       <div class="field"><label>To</label><input type="date" id="iv-end" value="${wk}"></div>
       <div class="field"><button class="btn btn-primary" id="iv-generate">Preview &amp; Print</button></div>
     </div>
