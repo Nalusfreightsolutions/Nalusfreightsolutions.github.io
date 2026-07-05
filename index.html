@@ -1483,6 +1483,34 @@ function findDuplicateTicket(company, ticket, excludeId){
   if(!t) return null;
   return state.loads.find(l => l.company===company && l.id!==excludeId && (l.ticket||'').toString().trim()===t) || null;
 }
+function findAllDuplicateTickets(company){
+  const groups = {};
+  loadsFor(company).forEach(l=>{
+    const t = (l.ticket||'').toString().trim();
+    if(!t) return;
+    (groups[t] = groups[t]||[]).push(l);
+  });
+  return Object.entries(groups).filter(([,items])=>items.length>1).sort((a,b)=>a[0].localeCompare(b[0]));
+}
+let dupTicketCheck = { NNL: null, NFS: null };
+function renderDupTicketPanel(company){
+  const results = dupTicketCheck[company];
+  if(results===null) return '';
+  if(!results.length) return `<div class="note" style="margin-bottom:14px; border-color:var(--good-500,#2E7D32);">✓ No duplicate ticket numbers found.</div>`;
+  const partyLabel = company==='NNL' ? 'Broker' : 'Client';
+  return `
+  <div class="card" style="border-color:var(--bad-500,#C0362C); margin-bottom:14px;">
+    <h2>⚠ Duplicate Ticket Numbers <span class="tag">${results.length} ticket number(s) used more than once</span></h2>
+    ${results.map(([ticket,items])=>`
+      <div style="margin-bottom:10px;">
+        <div style="font-weight:700; margin-bottom:4px;">Ticket #${ticket} — used ${items.length} times</div>
+        <div class="tablewrap"><table><thead><tr><th>Date</th><th>${partyLabel}</th><th>Qty</th><th>Revenue</th><th></th></tr></thead><tbody>
+          ${items.map(l=>`<tr><td>${fmtDate(l.date)}</td><td>${l.party||l.broker||''}</td><td class="num">${l.qty||''}</td><td class="num">${fmtMoney(l.revenue)}</td><td><button class="btn btn-ghost btn-sm" data-edit-load="${l.id}">Edit</button></td></tr>`).join('')}
+        </tbody></table></div>
+      </div>
+    `).join('')}
+  </div>`;
+}
 function sum(arr, key){ return arr.reduce((a,b)=>a+(Number(b[key])||0),0); }
 function groupBy(arr, key){
   const g = {};
@@ -1660,11 +1688,13 @@ function renderLoadsTab(company){
       </div>
       <div style="display:flex; gap:8px;">
         <input type="file" id="import-file-${company}" accept=".xlsx,.xls" style="display:none;">
+        <button class="btn btn-ghost" id="check-dup-tickets-${company}">⚠ Check for Duplicate Tickets</button>
         <button class="btn btn-ghost" id="import-loads-${company}">⬆ Import from Excel</button>
         <button class="btn btn-ghost" id="export-loads-${company}">⬇ Export to Excel</button>
       </div>
     </div>
   </div>
+  <div id="dup-ticket-panel-${company}">${renderDupTicketPanel(company)}</div>
   <datalist id="party-list-${company}">${partyOptions.map(p=>`<option value="${p}">`).join('')}</datalist>
   <datalist id="driver-list-${company}">${driverOptions.map(d=>`<option value="${d}">`).join('')}</datalist>
   ${!isNNL ? `<datalist id="load-material-list">${distinctPitMaterials().map(m=>`<option value="${m.replace(/"/g,'&quot;')}">`).join('')}</datalist>` : ''}
@@ -4991,6 +5021,17 @@ function attachHandlers(){
   if(importBtn && importFile){
     importBtn.onclick = ()=> importFile.click();
     importFile.onchange = ()=>{ handleImportFile(currentLoadCompany, importFile.files[0]); importFile.value=''; };
+  }
+
+  // Check for Duplicate Tickets
+  const checkDupBtn = document.getElementById('check-dup-tickets-'+currentLoadCompany);
+  if(checkDupBtn) checkDupBtn.onclick = ()=>{
+    dupTicketCheck[currentLoadCompany] = findAllDuplicateTickets(currentLoadCompany);
+    render();
+  };
+  const dupPanel = document.getElementById('dup-ticket-panel-'+currentLoadCompany);
+  if(dupPanel){
+    dupPanel.querySelectorAll('[data-edit-load]').forEach(b=>b.onclick=()=>{ editingLoadId=b.dataset.editLoad; render(); window.scrollTo(0,0); });
   }
 
   // Expenses
