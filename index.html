@@ -1478,6 +1478,11 @@ function computeLoadFinancials(l){
   return l;
 }
 function loadsFor(company){ return state.loads.filter(l=>l.company===company); }
+function findDuplicateTicket(company, ticket, excludeId){
+  const t = (ticket||'').toString().trim();
+  if(!t) return null;
+  return state.loads.find(l => l.company===company && l.id!==excludeId && (l.ticket||'').toString().trim()===t) || null;
+}
 function sum(arr, key){ return arr.reduce((a,b)=>a+(Number(b[key])||0),0); }
 function groupBy(arr, key){
   const g = {};
@@ -1964,29 +1969,48 @@ function saveAllTickets(company){
   const validRows = jobTicketRows[company].filter(r => String(r.qty).trim() !== '');
   if(!validRows.length){ alert('Add at least one ticket with a quantity.'); return; }
 
-  let created = 0;
+  // Duplicate ticket check: against loads already saved, and within this batch itself.
+  const seenInBatch = {};
+  const dupTickets = new Set();
   validRows.forEach(r=>{
-    const l = {
-      id: uid(), company, date: s.date, party: s.party, ticket: r.ticket,
-      truck: s.sameTruckDriver ? s.sharedTruck : r.truck,
-      driver: s.sameTruckDriver ? s.sharedDriver : r.driver,
-      paymentType: s.paymentType, qty: r.qty, rate: s.rate,
-      status: s.status, invoiceNum:'', datePaid:'', notes:''
-    };
-    if(company==='NNL'){
-      l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName; l.driverType = s.driverType; l.driverRate = s.driverRate;
-    }
-    if(company==='NFS'){
-      l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverRate = s.driverRate;
-    }
-    computeLoadFinancials(l);
-    state.loads.push(l);
-    created++;
+    const t = (r.ticket||'').toString().trim();
+    if(!t) return;
+    if(seenInBatch[t]) dupTickets.add(t);
+    seenInBatch[t] = true;
+    if(findDuplicateTicket(company, t, null)) dupTickets.add(t);
   });
-  persist();
-  jobTicketRows[company] = [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()];
-  alert(`Saved ${created} ticket(s) for ${s.party}.`);
-  render();
+
+  const finishSave = ()=>{
+    let created = 0;
+    validRows.forEach(r=>{
+      const l = {
+        id: uid(), company, date: s.date, party: s.party, ticket: r.ticket,
+        truck: s.sameTruckDriver ? s.sharedTruck : r.truck,
+        driver: s.sameTruckDriver ? s.sharedDriver : r.driver,
+        paymentType: s.paymentType, qty: r.qty, rate: s.rate,
+        status: s.status, invoiceNum:'', datePaid:'', notes:''
+      };
+      if(company==='NNL'){
+        l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName; l.driverType = s.driverType; l.driverRate = s.driverRate;
+      }
+      if(company==='NFS'){
+        l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverRate = s.driverRate;
+      }
+      computeLoadFinancials(l);
+      state.loads.push(l);
+      created++;
+    });
+    persist();
+    jobTicketRows[company] = [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()];
+    alert(`Saved ${created} ticket(s) for ${s.party}.`);
+    render();
+  };
+
+  if(dupTickets.size){
+    showConfirm(`Ticket # already used: ${[...dupTickets].join(', ')}. Save these tickets anyway?`, finishSave);
+  } else {
+    finishSave();
+  }
 }
 
 function distinctVals(company, key){
@@ -2032,8 +2056,16 @@ function bulkBarInner(company){
   const sel = selectedLoads[company];
   if(!sel.size) return `<div style="font-size:11.5px; color:#9FB0C3; margin:-4px 0 10px 2px;">Tip: check boxes on the left to select loads, then update them all at once.</div>`;
   const inp = 'padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; background:#fff;';
+  const items = selectedLoadObjects(company);
+  const totalQty = sum(items,'qty'), totalRevenue = sum(items,'revenue'), totalNet = sum(items,'net');
   return `
-  <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 12px; background:var(--navy-950,#0E1E30); border-radius:8px; margin-bottom:12px;">
+  <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:center; padding:10px 12px; background:var(--navy-800,#16324A); border-radius:8px 8px 0 0; margin-bottom:0;">
+    <span style="color:#fff; font-weight:700; font-size:13px;">Totals for ${sel.size} selected:</span>
+    <span style="color:#fff; font-size:12.5px;">Quantity: <strong>${totalQty.toLocaleString()}</strong></span>
+    <span style="color:#fff; font-size:12.5px;">Revenue (their money): <strong>${fmtMoney(totalRevenue)}</strong></span>
+    <span style="color:#fff; font-size:12.5px;">Net (my money): <strong>${fmtMoney(totalNet)}</strong></span>
+  </div>
+  <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 12px; background:var(--navy-950,#0E1E30); border-radius:0 0 8px 8px; margin-bottom:12px;">
     <span style="color:#fff; font-weight:700; font-size:13px;">${sel.size} selected</span>
     <span style="color:#5C7085;">|</span>
     <input type="date" id="bulk-datepaid-${company}" style="${inp}">
@@ -4935,10 +4967,18 @@ function attachHandlers(){
       l.broker = get('lf-broker'); l.jobName = get('lf-jobname'); l.material = get('lf-material'); l.jobSource = get('lf-jobsource'); l.driverType = get('lf-drivertype');
       l.driverRate = get('lf-driverrate');
     }
-    computeLoadFinancials(l);
-    if(!editingLoadId) state.loads.push(l);
-    editingLoadId = null;
-    persist(); render();
+    const finishSave = ()=>{
+      computeLoadFinancials(l);
+      if(!editingLoadId) state.loads.push(l);
+      editingLoadId = null;
+      persist(); render();
+    };
+    const dup = findDuplicateTicket(company, l.ticket, l.id);
+    if(dup){
+      showConfirm(`Ticket #${l.ticket} is already used by a load on ${fmtDate(dup.date)} for ${dup.party||dup.broker||'—'}. Save this one anyway?`, finishSave);
+    } else {
+      finishSave();
+    }
   };
   const cancelBtn = document.getElementById('lf-cancel');
   if(cancelBtn) cancelBtn.onclick = ()=>{ editingLoadId=null; render(); };
