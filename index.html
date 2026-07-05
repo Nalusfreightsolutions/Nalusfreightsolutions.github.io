@@ -3543,7 +3543,7 @@ function renderWeeklyTab(){
 function driverComplianceFlag(driverName){
   if(!driverName) return '';
   const match = state.compliance.find(r=>(r.name||'').trim().toLowerCase()===driverName.trim().toLowerCase());
-  if(!match) return '';
+  if(!match) return 'No Compliance Record';
   const s = complianceStatus(match);
   return s.label==='Complete' ? '' : s.label;
 }
