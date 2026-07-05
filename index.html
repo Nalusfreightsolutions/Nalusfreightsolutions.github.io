@@ -2265,7 +2265,7 @@ function renderSingleTruckMaintenance(truck){
 
 /* ============================= EXPENSES TAB ============================= */
 function renderExpensesTab(){
-  const rows = state.expenses.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const rows = state.expenses.slice().sort((a,b)=> (a.truck||'').localeCompare(b.truck||'') || (b.date||'').localeCompare(a.date||''));
   const editing = state.expenses.find(e=>e.id===editingExpenseId);
   const f = editing || {company:'NNL', date:'', category:'Diesel', truck:'', amount:'', frequency:'Daily', notes:''};
   const totalsByCat = {};
@@ -3589,7 +3589,10 @@ function driverTable(groupObj){
   <div class="sectiontitle">Nalu's Freight Solutions — Invoice by Client</div>
   <div class="card">${groupTable(nfsByClient,'revenue','driverPay','net','Client','NFS')}</div>
 
-  <div class="sectiontitle">Driver Payroll — This Range</div>
+  <div class="sectiontitle" style="display:flex; justify-content:space-between; align-items:center;">
+    <span>Driver Payroll — This Range</span>
+    <button class="btn btn-primary btn-sm" id="print-payroll-btn">🖨 Print Driver Payroll</button>
+  </div>
   <div class="card">${driverTable(allDrivers)}</div>
 
   <div class="sectiontitle">Overall Check</div>
@@ -4394,6 +4397,63 @@ function printAllForWeek(week){
   document.getElementById('inv-print').onclick = ()=>printWithTitle('Invoices');
 }
 
+function printDriverPayroll(){
+  const { start, end } = weeklyRange;
+  const wkLoadsAll = state.loads.filter(l=> l.date && l.date>=start && l.date<=end);
+  const allDrivers = groupBy(wkLoadsAll,'driver');
+  const entries = Object.entries(allDrivers);
+  if(!entries.length){ alert('No loads in this range yet.'); return; }
+  const totalPayroll = sum(wkLoadsAll,'driverPay');
+
+  const complianceFlagFor = (driverName) => {
+    if(!driverName) return '';
+    const match = state.compliance.find(r=>(r.name||'').trim().toLowerCase()===driverName.trim().toLowerCase());
+    if(!match) return 'No Compliance Record';
+    const s = complianceStatus(match);
+    return s.label==='Complete' ? '' : s.label;
+  };
+
+  const rows = entries.map(([name, items])=>{
+    const companies = [...new Set(items.map(i=>i.company))].join(' + ');
+    const flag = complianceFlagFor(name);
+    return `
+    <tr>
+      <td>${name}${flag ? ` <span style="color:#C0362C; font-weight:700;">⚠ ${flag}</span>` : ''}</td>
+      <td>${companies}</td>
+      <td class="num">${items.length}</td>
+      <td class="num">${fmtMoney(sum(items,'driverPay'))}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `
+    <div class="inv-head">
+      <div>
+        <div class="inv-brand">Driver Payroll</div>
+      </div>
+      <div>
+        <div class="inv-title">PAYROLL</div>
+        <div class="inv-meta">Week: <strong>${fmtDate(start)} – ${fmtDate(end)}</strong></div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="inv-totals">
+      <table><tr class="grand"><td>Total Payroll</td><td class="num">${fmtMoney(totalPayroll)}</td></tr></table>
+    </div>`;
+
+  document.getElementById('invoice-modal').innerHTML = `
+    <div class="invoice-page">${html}</div>
+    <div class="modal-actions no-print">
+      <button class="btn btn-ghost" id="inv-close">Close</button>
+      <button class="btn btn-primary" id="inv-print">Print / Save as PDF</button>
+    </div>`;
+  document.getElementById('invoice-overlay').style.display = 'flex';
+  document.getElementById('inv-close').onclick = closeInvoice;
+  document.getElementById('inv-print').onclick = ()=>printWithTitle('Driver Payroll');
+}
+
 function closeInvoice(){
   document.getElementById('invoice-overlay').style.display = 'none';
   render();
@@ -5124,6 +5184,8 @@ function attachHandlers(){
     render();
     window.scrollTo(0,0);
   });
+  const printPayrollBtn = document.getElementById('print-payroll-btn');
+  if(printPayrollBtn) printPayrollBtn.onclick = printDriverPayroll;
 
   // Annual
   document.querySelectorAll('.annual-item,.annual-amount,.annual-due,.annual-status').forEach(inp=>{
