@@ -859,7 +859,34 @@ const EXPENSE_CATEGORIES = ['Diesel','Tolls','Insurance','Truck Loan','Tires','O
 const MAINTENANCE_CATEGORIES = ['Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Truck Repair'];
 // The owner's own company trucks — independent drivers use their own trucks,
 // which aren't tracked here since maintenance on those isn't the company's concern.
-const MY_TRUCKS = ['Nelson','Edel','Carlos','Yandier'];
+// Same list doubles as "my drivers" (truck # = driver name, by the owner's convention)
+// for the truck-wash payroll deduction below.
+const MY_TRUCKS = ['Nalu Nui - Nelson','Nalu Nui - Edel','Nalu Nui - Carlos','Nalu Nui - Yandier'];
+const TRUCK_WASH_DEDUCTION = 50;
+// One-time migration: the owner's 4 company drivers/trucks used to be logged
+// under plain first names — renaming everywhere to "Nalu Nui - {name}" for clarity.
+const DRIVER_NAME_MIGRATIONS = {
+  'nelson': 'Nalu Nui - Nelson',
+  'carlos': 'Nalu Nui - Carlos',
+  'edel': 'Nalu Nui - Edel',
+  'yandier': 'Nalu Nui - Yandier'
+};
+function migrateDriverNames(){
+  let changed = false;
+  const rename = (val) => {
+    if(!val) return val;
+    const target = DRIVER_NAME_MIGRATIONS[val.trim().toLowerCase()];
+    if(target && val !== target){ changed = true; return target; }
+    return val;
+  };
+  state.loads.forEach(l=>{
+    l.driver = rename(l.driver);
+    l.truck = rename(l.truck);
+  });
+  state.expenses.forEach(e=>{ e.truck = rename(e.truck); });
+  state.compliance.forEach(r=>{ r.name = rename(r.name); });
+  return changed;
+}
 let activeTab = 'dashboard';
 let currentUser = null;
 let currentUserRole = null; // 'owner' | 'sales_rep'
@@ -1437,6 +1464,7 @@ async function loadState(){
     if(main) main.insertAdjacentHTML('afterbegin', `<div style="background:#FDEDEC;border:1.5px solid var(--bad-500);color:var(--bad-500);padding:12px 16px;border-radius:8px;margin-bottom:14px;font-size:13px;"><strong>Could not connect to the database:</strong> ${((e&&e.message)||e+'').replace(/</g,'&lt;')}. Check your internet connection and reload.</div>`);
   }
   initialLoadComplete = true;
+  if(migrateDriverNames()) persist();
   render();
 }
 
@@ -3559,12 +3587,19 @@ function driverNameCell(driverName){
 function driverTable(groupObj){
     const entries = Object.entries(groupObj);
     if(!entries.length) return `<div class="empty">No loads in this range yet.</div>`;
-    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th></tr></thead><tbody>
-      ${entries.map(([name,items])=>{
-        const companies = [...new Set(items.map(i=>i.company))].join(' + ');
-        return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td></tr>`;
-      }).join('')}
-      <tr class="grouprow"><td colspan="3">TOTAL PAYROLL FOR THIS RANGE</td><td class="num">${fmtMoney(totalPayroll)}</td></tr>
+    let totalNet = 0;
+    const bodyRows = entries.map(([name,items])=>{
+      const companies = [...new Set(items.map(i=>i.company))].join(' + ');
+      const owed = sum(items,'driverPay');
+      const isMyDriver = MY_TRUCKS.includes(name);
+      const deduction = isMyDriver ? TRUCK_WASH_DEDUCTION : 0;
+      const netPay = owed - deduction;
+      totalNet += netPay;
+      return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(owed)}</td><td class="num">${isMyDriver? '-'+fmtMoney(deduction) : '—'}</td><td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td></tr>`;
+    }).join('');
+    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Truck Wash</th><th>Net Pay</th></tr></thead><tbody>
+      ${bodyRows}
+      <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after truck wash)</td><td class="num">${fmtMoney(totalNet)}</td></tr>
     </tbody></table></div>`;
   }
 
@@ -4403,7 +4438,6 @@ function printDriverPayroll(){
   const allDrivers = groupBy(wkLoadsAll,'driver');
   const entries = Object.entries(allDrivers);
   if(!entries.length){ alert('No loads in this range yet.'); return; }
-  const totalPayroll = sum(wkLoadsAll,'driverPay');
 
   const complianceFlagFor = (driverName) => {
     if(!driverName) return '';
@@ -4413,15 +4447,23 @@ function printDriverPayroll(){
     return s.label==='Complete' ? '' : s.label;
   };
 
+  let totalNet = 0;
   const rows = entries.map(([name, items])=>{
     const companies = [...new Set(items.map(i=>i.company))].join(' + ');
     const flag = complianceFlagFor(name);
+    const owed = sum(items,'driverPay');
+    const isMyDriver = MY_TRUCKS.includes(name);
+    const deduction = isMyDriver ? TRUCK_WASH_DEDUCTION : 0;
+    const netPay = owed - deduction;
+    totalNet += netPay;
     return `
     <tr>
       <td>${name}${flag ? ` <span style="color:#C0362C; font-weight:700;">⚠ ${flag}</span>` : ''}</td>
       <td>${companies}</td>
       <td class="num">${items.length}</td>
-      <td class="num">${fmtMoney(sum(items,'driverPay'))}</td>
+      <td class="num">${fmtMoney(owed)}</td>
+      <td class="num">${isMyDriver? '-'+fmtMoney(deduction) : '—'}</td>
+      <td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td>
     </tr>`;
   }).join('');
 
@@ -4436,11 +4478,11 @@ function printDriverPayroll(){
       </div>
     </div>
     <table>
-      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th></tr></thead>
+      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Truck Wash</th><th>Net Pay</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
-      <table><tr class="grand"><td>Total Payroll</td><td class="num">${fmtMoney(totalPayroll)}</td></tr></table>
+      <table><tr class="grand"><td>Total Payroll (after truck wash)</td><td class="num">${fmtMoney(totalNet)}</td></tr></table>
     </div>`;
 
   document.getElementById('invoice-modal').innerHTML = `
