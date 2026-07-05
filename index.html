@@ -930,7 +930,7 @@ let currentWeekEnding = nextFriday();
 let weeklyRange = { start:'', end:'' };
 let loadsFilterText = { NNL:'', NFS:'' };
 let loadsSortConfig = { NNL:{key:'date',dir:'desc'}, NFS:{key:'date',dir:'desc'} };
-function mkDefaultLoadFilters(){ return { status:'All', driver:'All', truck:'All', party:'All', datePaid:'All', dateFrom:'', dateTo:'' }; }
+function mkDefaultLoadFilters(){ return { status:'All', driver:'All', truck:'All', party:'All', jobName:'All', datePaid:'All', dateFrom:'', dateTo:'' }; }
 let loadsFilters = { NNL: mkDefaultLoadFilters(), NFS: mkDefaultLoadFilters() };
 let selectedLoads = { NNL: new Set(), NFS: new Set() };
 let exportDirHandle = null; // File System Access API handle, in-memory only (browser security)
@@ -2001,7 +2001,7 @@ function loadsFilterBarInner(company){
   const partyLabel = isNNL ? 'Broker' : 'Client';
   const selStyle = 'padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; background:#fff;';
   const opt = (list, cur) => ['All',...list].map(o=>`<option ${cur===o?'selected':''}>${o}</option>`).join('');
-  const activeCount = ['status','driver','truck','party','datePaid'].filter(k=>f[k]!=='All').length + (f.dateFrom?1:0) + (f.dateTo?1:0);
+  const activeCount = ['status','driver','truck','party','jobName','datePaid'].filter(k=>f[k]!=='All').length + (f.dateFrom?1:0) + (f.dateTo?1:0);
   return `
   <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; padding:10px 12px; background:var(--steel-50,#F4F7FA); border:1px solid var(--steel-200); border-radius:8px; margin-bottom:12px;">
     <div><label style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5C7085; display:block; margin-bottom:3px;">Status</label>
@@ -2018,6 +2018,8 @@ function loadsFilterBarInner(company){
       <select data-lfilter="truck" data-company="${company}" style="${selStyle}">${opt(distinctVals(company,'truck'), f.truck)}</select></div>
     <div><label style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5C7085; display:block; margin-bottom:3px;">${partyLabel}</label>
       <select data-lfilter="party" data-company="${company}" style="${selStyle}">${opt(distinctVals(company,'party'), f.party)}</select></div>
+    <div><label style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5C7085; display:block; margin-bottom:3px;">Job Name</label>
+      <select data-lfilter="jobName" data-company="${company}" style="${selStyle}">${opt(distinctVals(company,'jobName'), f.jobName)}</select></div>
     <div><label style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5C7085; display:block; margin-bottom:3px;">Load Date From</label>
       <input type="date" data-lfilter="dateFrom" data-company="${company}" value="${f.dateFrom}" style="${selStyle}"></div>
     <div><label style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5C7085; display:block; margin-bottom:3px;">To</label>
@@ -4499,6 +4501,7 @@ function filteredLoads(company){
   if(f.driver!=='All') rows = rows.filter(l => (l.driver||'')===f.driver);
   if(f.truck!=='All') rows = rows.filter(l => (l.truck||'').toString()===f.truck);
   if(f.party!=='All') rows = rows.filter(l => (l.party||'')===f.party);
+  if(f.jobName!=='All') rows = rows.filter(l => (l.jobName||'')===f.jobName);
   if(f.datePaid==='missing') rows = rows.filter(l => !l.datePaid);
   else if(f.datePaid==='has') rows = rows.filter(l => !!l.datePaid);
   if(f.dateFrom) rows = rows.filter(l => (l.date||'') >= f.dateFrom);
@@ -4508,7 +4511,7 @@ function filteredLoads(company){
 function anyLoadsFilterActive(company){
   const f = loadsFilters[company];
   return !!(loadsFilterText[company] || f.dateFrom || f.dateTo ||
-    ['status','driver','truck','party','datePaid'].some(k=>f[k]!=='All'));
+    ['status','driver','truck','party','jobName','datePaid'].some(k=>f[k]!=='All'));
 }
 function refreshLoadsTable(company){
   const tableRegion = document.getElementById('loads-table-only-'+company);
