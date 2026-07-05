@@ -4123,24 +4123,30 @@ function buildInvoiceHTML(company, party, opts){
   const dueDate = addDays(rangeEnd, 7);
   const total = sum(items,'revenue');
 
-  const rows = items.map(l=>{
-    const customer = (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
+  const jobGroups = {};
+  items.forEach(l=>{
+    const jn = l.jobName || '—';
+    (jobGroups[jn] = jobGroups[jn] || []).push(l);
+  });
+  const rows = Object.entries(jobGroups).map(([jobName, group])=>{
+    const qty = sum(group,'qty');
+    const rates = [...new Set(group.map(l=>Number(l.rate)||0))];
+    const rateDisplay = rates.length===1 ? fmtMoney(rates[0]) : 'Various';
+    const revenue = sum(group,'revenue');
+    const unit = unitLabel(group[0].paymentType);
     return `
     <tr>
-      <td>${fmtDate(l.date)}</td>
-      <td class="num">${l.ticket||'—'}</td>
-      <td>${customer}</td>
-      <td>${l.jobName||'—'}</td>
-      <td class="num">${l.qty||0} ${unitLabel(l.paymentType)}</td>
-      <td class="num">${fmtMoney(l.rate)}</td>
-      <td class="num">${fmtMoney(l.revenue)}</td>
+      <td>${jobName}</td>
+      <td class="num">${qty} ${unit}</td>
+      <td class="num">${rateDisplay}</td>
+      <td class="num">${fmtMoney(revenue)}</td>
     </tr>`;}).join('');
 
   const html = `
     <div class="inv-head">
       <div>
         <div class="inv-brand">${biz.name}</div>
-        <div class="inv-sub">${biz.sub? biz.sub+'<br>' : ''}${biz.address}<br>${biz.phone}</div>
+        <div class="inv-sub">${biz.sub? biz.sub+'<br>' : ''}${biz.phone}</div>
       </div>
       <div>
         <div class="inv-title">INVOICE</div>
@@ -4157,17 +4163,13 @@ function buildInvoiceHTML(company, party, opts){
     </div>
     <div style="font-size:12px;color:#5C7085;margin-bottom:14px;">${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}</div>
     <table>
-      <thead><tr><th>Date</th><th>Ticket #</th><th>Customer</th><th>Job Name</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+      <thead><tr><th>Job Name</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
       <table>
         <tr class="grand"><td>Total Due</td><td class="num">${fmtMoney(total)}</td></tr>
       </table>
-    </div>
-    <div class="inv-terms">
-      <strong>Payment Terms:</strong> Net 7 — due ${fmtDate(dueDate)}.<br>
-      Thank you for your business.
     </div>`;
   return { html, invNum, total, dueDate, rangeStart, rangeEnd };
 }
@@ -4292,19 +4294,34 @@ function invoiceTextFor(company, party, opts){
   const rangeEnd = opts.endDate || items[items.length-1].date;
   const dueDate = addDays(rangeEnd,7);
   const invNum = items[0].invoiceNum || '(not yet generated — click Print first)';
-  const lines = items.map(l=>{
-    const customer = (company==='NNL' ? (l.customer||'') : (l.party||'')) || '—';
-    return `${fmtDate(l.date)}  |  Ticket ${l.ticket||'—'}  |  ${customer}${l.jobName? ' · '+l.jobName : ''}  |  ${l.qty||0} ${unitLabel(l.paymentType)} @ ${fmtMoney(l.rate)}  =  ${fmtMoney(l.revenue)}`;
+  const jobGroups = {};
+  items.forEach(l=>{
+    const jn = l.jobName || '—';
+    (jobGroups[jn] = jobGroups[jn] || []).push(l);
+  });
+  const lines = Object.entries(jobGroups).map(([jobName, group])=>{
+    const qty = sum(group,'qty');
+    const rates = [...new Set(group.map(l=>Number(l.rate)||0))];
+    const rateDisplay = rates.length===1 ? fmtMoney(rates[0]) : 'Various';
+    const revenue = sum(group,'revenue');
+    const unit = unitLabel(group[0].paymentType);
+    return `${jobName}  |  ${qty} ${unit} @ ${rateDisplay}  =  ${fmtMoney(revenue)}`;
   });
   const total = sum(items,'revenue');
   return [
-    `${biz.name}`, ...(biz.sub? [biz.sub] : []), `${biz.address}  ·  ${biz.phone}`, '',
+    `${biz.name}`, ...(biz.sub? [biz.sub] : []), `${biz.phone}`, '',
     `INVOICE #${invNum}`, `Date Issued: ${fmtDate(rangeEnd)}`, `Payment Due: ${fmtDate(dueDate)}`, '',
     `Bill To: ${party}`, `${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}`, '',
     ...lines, '',
-    `TOTAL DUE: ${fmtMoney(total)}`, '',
-    `Payment Terms: Net 7 — due ${fmtDate(dueDate)}.`, `Thank you for your business.`
+    `TOTAL DUE: ${fmtMoney(total)}`
   ].join('\n');
+}
+
+function printWithTitle(title){
+  const original = document.title;
+  document.title = title;
+  window.print();
+  document.title = original;
 }
 
 function openInvoice(company, party, opts){
@@ -4320,7 +4337,7 @@ function openInvoice(company, party, opts){
     </div>`;
   document.getElementById('invoice-overlay').style.display = 'flex';
   document.getElementById('inv-close').onclick = closeInvoice;
-  document.getElementById('inv-print').onclick = ()=>window.print();
+  document.getElementById('inv-print').onclick = ()=>printWithTitle('Invoice '+built.invNum);
 }
 
 function printAllForWeek(week){
@@ -4340,7 +4357,7 @@ function printAllForWeek(week){
     </div>`;
   document.getElementById('invoice-overlay').style.display = 'flex';
   document.getElementById('inv-close').onclick = closeInvoice;
-  document.getElementById('inv-print').onclick = ()=>window.print();
+  document.getElementById('inv-print').onclick = ()=>printWithTitle('Invoices');
 }
 
 function closeInvoice(){
