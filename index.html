@@ -960,7 +960,7 @@ function hideDataSafetyWarning(){
 document.getElementById('safety-banner-dismiss').onclick = hideDataSafetyWarning;
 
 function mkEmptyTicketRow(defaults){ return { ticket:'', truck:(defaults&&defaults.truck)||'', driver:(defaults&&defaults.driver)||'', qty:'' }; }
-function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', material:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverPay:'', driverRate:'', status:'Pending', sameTruckDriver:false, sharedTruck:'', sharedDriver:'' }; }
+function mkDefaultJobShared(){ return { date:'', party:'', pit:'', customer:'', jobName:'', broker:'', material:'', jobSource:'Direct', driverType:'Company Driver', paymentType:'Per Ton', rate:'', driverRate:'', status:'Pending', sameTruckDriver:false, sharedTruck:'', sharedDriver:'' }; }
 let jobShared = { NNL: mkDefaultJobShared(), NFS: mkDefaultJobShared() };
 let jobTicketRows = { NNL: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()], NFS: [mkEmptyTicketRow(),mkEmptyTicketRow(),mkEmptyTicketRow()] };
 
@@ -1459,20 +1459,20 @@ function persist(){
 function computeLoadFinancials(l){
   const qty = Number(l.qty)||0, rate = Number(l.rate)||0;
   l.revenue = qty*rate;
+  const driverRate = Number(l.driverRate)||0;
   if(l.company==='NNL' && l.driverType!=='Independent Driver'){
     // Company drivers (the default/majority case): automatic 30% split.
     // Normally 30% of the broker revenue, but if this driver has their own
     // rate that differs from the broker rate, the 30% comes out of THEIR
     // rate instead (e.g. driver rate $6/yd vs broker rate $6.35/yd — the
     // driver's 30% cut is based on the $6, not the $6.35).
-    const driverRate = Number(l.driverRate)||0;
     const driverBasis = driverRate>0 ? qty*driverRate : l.revenue;
     l.driverPay = +(driverBasis*0.3).toFixed(2);
   } else {
-    // Independent drivers (both companies) and all NFS loads: driver pay is
-    // whatever rate was actually negotiated with them, entered directly —
-    // not a cut of revenue.
-    l.driverPay = Number(l.driverPay)||0;
+    // Independent drivers (both companies) and all NFS loads: paid their
+    // own per-unit rate in full, no cut — multiplied by this load's quantity
+    // (same as how the broker Rate becomes revenue).
+    l.driverPay = +(qty*driverRate).toFixed(2);
   }
   l.net = +(l.revenue - l.driverPay).toFixed(2);
   return l;
@@ -1641,6 +1641,10 @@ function renderLoadsTab(company){
 
   const editing = state.loads.find(l=>l.id===editingLoadId && l.company===company);
   const f = editing || {company, date:'', party:'', ticket:'', pit:'', customer:'', jobName:'', broker:'', truck:'', driver:'', driverType:'Company Driver', jobSource:'Direct', referredBy:'', paymentType:'Per Ton', qty:'', rate:'', driverPay:'', status:'Pending', invoiceNum:'', datePaid:'', notes:''};
+  // Backward-compat: older loads stored driverPay as a flat total (no driverRate).
+  // Show an equivalent per-unit rate so re-saving unchanged reproduces the same total.
+  const displayDriverRate = (f.driverRate!=null && f.driverRate!=='') ? f.driverRate
+    : (editing && f.driverPay && f.qty ? (Number(f.driverPay)/Number(f.qty)).toFixed(2) : '');
 
   return `
   <div class="pagehead">
@@ -1683,8 +1687,7 @@ function renderLoadsTab(company){
         <option ${f.driverType!=='Independent Driver'?'selected':''}>Company Driver</option>
         <option ${f.driverType==='Independent Driver'?'selected':''}>Independent Driver</option>
       </select></div>
-      <div class="field"><label>Driver's Rate ($) — Independent Driver</label><input type="number" step="0.01" id="lf-driverpay" value="${f.driverPay||''}" placeholder="Only used when Driver Type = Independent Driver"></div>
-      <div class="field"><label>Driver's Rate ($/unit) — Company Driver</label><input type="number" step="0.01" id="lf-driverrate" value="${f.driverRate||''}" placeholder="Only if different from My Rate — leave blank to use My Rate for their 30% cut"></div>
+      <div class="field"><label>Driver's Rate ($/unit)</label><input type="number" step="0.01" id="lf-driverrate" value="${displayDriverRate}" placeholder="Independent Driver gets this in full; Company Driver gets 30% of it (leave blank to use My Rate)"></div>
       <div class="field"><label>Invoice #</label><input type="text" id="lf-invoicenum" value="${f.invoiceNum||''}"></div>
 
       <div class="field"><label>Payment Status</label><select id="lf-status">
@@ -1712,7 +1715,7 @@ function renderLoadsTab(company){
         ${['Per Ton','Per Yard','Per Load','Per Hour'].map(o=>`<option ${f.paymentType===o?'selected':''}>${o}</option>`).join('')}
       </select></div>
       <div class="field"><label>Quantity</label><input type="number" step="0.01" id="lf-qty" value="${f.qty||''}"></div>
-      <div class="field"><label>Driver's Rate ($)</label><input type="number" step="0.01" id="lf-driverpay" value="${f.driverPay||''}" placeholder="Pay for this driver"></div>
+      <div class="field"><label>Driver's Rate ($/unit)</label><input type="number" step="0.01" id="lf-driverrate" value="${displayDriverRate}" placeholder="Paid in full per yard/ton/etc. — the app multiplies by Quantity"></div>
       <div class="field"><label>My Rate ($)</label><input type="number" step="0.01" id="lf-rate" value="${f.rate||''}"></div>
       <div class="field"><label>Invoice #</label><input type="text" id="lf-invoicenum" value="${f.invoiceNum||''}"></div>
 
@@ -1768,8 +1771,7 @@ function renderJobTicketForm(company){
       <div class="field"><label>Payment Type</label><select id="js-paymenttype">
         ${['Per Ton','Per Yard','Per Load','Per Hour'].map(o=>`<option ${s.paymentType===o?'selected':''}>${o}</option>`).join('')}
       </select></div>
-      <div class="field"><label>Driver's Rate ($) — Independent Driver</label><input type="number" step="0.01" id="js-driverpay" value="${s.driverPay}" placeholder="Only used when Driver Type = Independent Driver"></div>
-      <div class="field"><label>Driver's Rate ($/unit) — Company Driver</label><input type="number" step="0.01" id="js-driverrate" value="${s.driverRate||''}" placeholder="Only if different from My Rate — leave blank to use My Rate for their 30% cut"></div>
+      <div class="field"><label>Driver's Rate ($/unit)</label><input type="number" step="0.01" id="js-driverrate" value="${s.driverRate||''}" placeholder="Independent Driver gets this in full; Company Driver gets 30% of it (leave blank to use My Rate)"></div>
       <div class="field"><label>My Rate ($) — applies to every ticket</label><input type="number" step="0.01" id="js-rate" value="${s.rate}"></div>
       <div class="field"><label>Payment Status</label><select id="js-status">
         ${['Pending','Invoiced','Paid'].map(o=>`<option ${s.status===o?'selected':''}>${o}</option>`).join('')}
@@ -1791,7 +1793,7 @@ function renderJobTicketForm(company){
       <div class="field"><label>Payment Type</label><select id="js-paymenttype">
         ${['Per Ton','Per Yard','Per Load','Per Hour'].map(o=>`<option ${s.paymentType===o?'selected':''}>${o}</option>`).join('')}
       </select></div>
-      <div class="field"><label>Driver's Rate ($) per ticket</label><input type="number" step="0.01" id="js-driverpay" value="${s.driverPay}" placeholder="Same for every ticket"></div>
+      <div class="field"><label>Driver's Rate ($/unit)</label><input type="number" step="0.01" id="js-driverrate" value="${s.driverRate||''}" placeholder="Paid in full per yard/ton/etc. — the app multiplies by each ticket's own Quantity"></div>
       <div class="field"><label>My Rate ($) — applies to every ticket</label><input type="number" step="0.01" id="js-rate" value="${s.rate}"></div>
       <div class="field"><label>Payment Status</label><select id="js-status">
         ${['Pending','Invoiced','Paid'].map(o=>`<option ${s.status===o?'selected':''}>${o}</option>`).join('')}
@@ -1919,7 +1921,7 @@ function attachJobSharedHandlers(company){
   bind('js-broker','broker'); bind('js-material','material'); bind('js-jobsource','jobSource'); bind('js-drivertype','driverType');
   bind('js-paymenttype','paymentType');
   bind('js-rate','rate', ()=>refreshAllRevenuePreviews(company));
-  bind('js-driverpay','driverPay'); bind('js-driverrate','driverRate'); bind('js-status','status');
+  bind('js-driverrate','driverRate'); bind('js-status','status');
   bind('js-sharedtruck','sharedTruck'); bind('js-shareddriver','sharedDriver');
 
   const sameTruckDriverBox = document.getElementById('js-sametruckdriver');
@@ -1972,10 +1974,10 @@ function saveAllTickets(company){
       status: s.status, invoiceNum:'', datePaid:'', notes:''
     };
     if(company==='NNL'){
-      l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName; l.driverType = s.driverType; l.driverPay = s.driverPay; l.driverRate = s.driverRate;
+      l.pit = s.pit; l.customer = s.customer; l.jobName = s.jobName; l.driverType = s.driverType; l.driverRate = s.driverRate;
     }
     if(company==='NFS'){
-      l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverPay = s.driverPay;
+      l.broker = s.broker; l.jobName = s.jobName; l.material = s.material; l.jobSource = s.jobSource; l.driverType = s.driverType; l.driverRate = s.driverRate;
     }
     computeLoadFinancials(l);
     state.loads.push(l);
@@ -2071,7 +2073,7 @@ function loadsTableInner(company){
   const colcount = (isNNL ? 20 : 21) + 1;
   const header = selTh + (isNNL
     ? `${sh('date','Date')}${sh('party','Broker')}${sh('pit','Pit')}${sh('customer','Customer')}${sh('jobName','Job Name')}${sh('truck','Truck #')}${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('rate','Rate')}${sh('driver','Driver')}<th>Driver Type</th>${sh('invoiceNum','Invoice #')}${sh('revenue','Revenue')}${sh('driverPay','Driver Pay')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`
-    : `${sh('date','Date')}${sh('broker','Broker')}${sh('party','Client')}${sh('jobName','Job Name')}${sh('material','Material')}<th>Job Source</th><th>Driver Type</th>${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('driverPay',"Driver's Rate")}${sh('rate','Rate')}${sh('invoiceNum','Invoice #')}${sh('driver','Driver')}${sh('truck','Truck #')}${sh('revenue','Revenue')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`);
+    : `${sh('date','Date')}${sh('broker','Broker')}${sh('party','Client')}${sh('jobName','Job Name')}${sh('material','Material')}<th>Job Source</th><th>Driver Type</th>${sh('ticket','Ticket #')}${sh('paymentType','Type')}${sh('qty','Qty')}${sh('driverPay','Driver Pay')}${sh('rate','Rate')}${sh('invoiceNum','Invoice #')}${sh('driver','Driver')}${sh('truck','Truck #')}${sh('revenue','Revenue')}${sh('net','Net')}${sh('status','Status')}<th>Date Paid</th><th>Notes</th><th class="sticky-actions"></th>`);
 
   const rowHtml = l => {
     const isSel = selectedLoads[company].has(l.id);
@@ -4578,6 +4580,11 @@ async function handleImportFile(company, file){
     const l = mapRowToLoad(row, company);
     if(!l.date || !l.party){ skipped++; return; }
     l.id = uid(); l.company = company;
+    // Spreadsheets may have a flat driver-pay column (old convention) — convert
+    // to an equivalent per-unit driverRate so computeLoadFinancials doesn't zero it out.
+    if(l.driverPay && Number(l.qty)>0 && !l.driverRate){
+      l.driverRate = (Number(l.driverPay)/Number(l.qty)).toFixed(2);
+    }
     computeLoadFinancials(l);
     state.loads.push(l);
     imported++;
@@ -4907,11 +4914,11 @@ function attachHandlers(){
     l.status = get('lf-status'); l.invoiceNum = get('lf-invoicenum'); l.datePaid = get('lf-datepaid'); l.notes = get('lf-notes');
     if(company==='NNL'){
       l.pit = get('lf-pit'); l.customer = get('lf-customer'); l.jobName = get('lf-jobname');
-      l.driverType = get('lf-drivertype'); l.driverPay = get('lf-driverpay'); l.driverRate = get('lf-driverrate');
+      l.driverType = get('lf-drivertype'); l.driverRate = get('lf-driverrate');
     }
     if(company==='NFS'){
       l.broker = get('lf-broker'); l.jobName = get('lf-jobname'); l.material = get('lf-material'); l.jobSource = get('lf-jobsource'); l.driverType = get('lf-drivertype');
-      l.driverPay = get('lf-driverpay');
+      l.driverRate = get('lf-driverrate');
     }
     computeLoadFinancials(l);
     if(!editingLoadId) state.loads.push(l);
