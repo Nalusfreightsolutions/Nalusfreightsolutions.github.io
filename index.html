@@ -4416,15 +4416,17 @@ function buildQuoteProposalHTML(q){
   const repName = rep ? rep.name : (q.submittedBy||'');
 
   const materials = (q.materials||[]).filter(m=>m.material);
-  const matRows = materials.map(m=>`
+  const matRows = materials.map(m=>{
+    const pit = state.pits.find(p=>p.id===m.pit);
+    return `
     <tr>
       <td style="${PROP_CELL}">${m.material}</td>
       <td style="${PROP_CELL}">${m.qtyRequested||''}+/-</td>
       <td style="${PROP_CELL}">Per ${unitLabelProposal(m.unit)}</td>
-      <td style="${PROP_CELL}">Trucking+Material+Nalu</td>
+      <td style="${PROP_CELL}">${pit? pitLabel(pit) : '—'}</td>
       <td style="${PROP_CELL}">Mini- ${fmtMoney(m.pricePerUnit)}/${unitLabelProposal(m.unit)}</td>
       <td style="${PROP_CELL}">Per ${unitLabelProposal(m.unit)}</td>
-    </tr>`).join('');
+    </tr>`;}).join('');
   const blankRowCount = Math.max(0, 8 - materials.length);
   const blankRows = Array(blankRowCount).fill(`<tr><td style="${PROP_CELL}">&nbsp;</td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td></tr>`).join('');
 
