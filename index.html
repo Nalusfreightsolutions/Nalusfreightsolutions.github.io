@@ -1713,7 +1713,8 @@ function renderNfsBalancesBanner(){
       <tbody>
         ${balances.map(j=>`<tr>
           <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
-          <td class="num">${fmtMoney(j.billedToDate)}</td><td class="num">${fmtMoney(j.amountPaid)}</td>
+          <td class="num">${fmtMoney(j.billedToDate)}</td>
+          <td class="num"><input type="number" step="0.01" min="0" value="${j.amountPaid}" data-set-paid="${j.id}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; text-align:right;"></td>
           <td class="num" style="color:var(--bad-500);font-weight:700;">${fmtMoney(j.balanceDue)}</td>
           <td><div style="display:flex; gap:6px; justify-content:flex-end;">
             <input type="number" step="0.01" min="0" placeholder="0.00" data-payment-input="${j.id}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
@@ -3677,7 +3678,8 @@ function renderSalesJobsSection(){
             <td class="num">${fmtMoney(j.totalMaterial)}</td><td class="num">${fmtMoney(j.totalTax)}</td>
             <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
             <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td>
-            <td class="num">${fmtMoney(j.billedToDate)}</td><td class="num">${fmtMoney(j.amountPaid)}</td>
+            <td class="num">${fmtMoney(j.billedToDate)}</td>
+            <td class="num"><input type="number" step="0.01" min="0" value="${j.amountPaid}" data-set-paid="${j.id}" style="width:85px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; text-align:right;"></td>
             <td class="num" style="${j.balanceDue>0.01?'color:var(--bad-500);font-weight:700;':''}">${fmtMoney(j.balanceDue)}</td>
             <td>${j.salesRep||''}</td>
             <td><button class="btn btn-ghost btn-sm" data-edit-salesjob="${j.id}">Edit</button> <button class="btn btn-danger btn-sm" data-del-salesjob="${j.id}">Delete</button></td>
@@ -5679,6 +5681,13 @@ function attachHandlers(){
     const job = state.salesJobs.find(j=>j.id===jobId);
     if(!job) return;
     job.amountPaid = +((Number(job.amountPaid)||0) + amount).toFixed(2);
+    persist(); render();
+  });
+  document.querySelectorAll('[data-set-paid]').forEach(inp=>inp.onchange=()=>{
+    const jobId = inp.dataset.setPaid;
+    const job = state.salesJobs.find(j=>j.id===jobId);
+    if(!job) return;
+    job.amountPaid = Math.max(0, Number(inp.value)||0);
     persist(); render();
   });
 
