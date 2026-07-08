@@ -3607,10 +3607,9 @@ function renderSalesJobsSection(){
           return `<tr>
             <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
             <td>${fmtDate(j.jobStarted)}</td><td>${fmtDate(j.jobEnded)}</td>
-            <td>${(j.materials||[]).filter(m=>m.material).map(m=>{
-              const pit = state.pits.find(p=>p.id===m.pit);
-              return `${m.material} (${m.qtyFinal||m.qtyRequested||0} ${unitLabelSales(m.unit)}) @ ${pit? pitLabel(pit) : ''}`;
-            }).join('<br>') || '—'}</td>
+            <td>${(j.materials||[]).filter(m=>m.material).map(m=>
+              `${m.material} (${m.qtyFinal||m.qtyRequested||0} ${unitLabelSales(m.unit)})`
+            ).join('<br>') || '—'}</td>
             <td style="font-size:12px;">${completedSummaryHtml(j) || '—'}</td>
             <td class="num">${fmtMoney(j.totalMaterial)}</td><td class="num">${fmtMoney(j.totalTax)}</td>
             <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
