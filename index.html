@@ -197,7 +197,7 @@
 
   @media print{
     body *{visibility:hidden;}
-    #invoice-overlay, #invoice-modal, #invoice-modal *{visibility:visible;}
+    #invoice-overlay, #invoice-modal, #invoice-modal *{visibility:visible; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;}
     #invoice-overlay{position:absolute; inset:auto; top:0; left:0; width:100%; overflow:visible; background:none; padding:0; display:block !important;}
     #invoice-modal{position:absolute; top:0; left:0; width:100%; max-width:none; box-shadow:none; border-radius:0;}
     .no-print{display:none !important;}
@@ -862,6 +862,14 @@ const SALES_REPS = {
   'sebastian cardenas': { name:'Sebastian Cardenas', phone:'407-864-5714', email:'scardenas@nalusfreight.com' },
   'daniel galvis': { name:'Daniel Galvis', phone:'407-408-4470', email:'Dgalvis@nalusfreight.com' }
 };
+function findSalesRep(submittedBy){
+  const input = (submittedBy||'').trim().toLowerCase();
+  if(!input) return null;
+  if(SALES_REPS[input]) return SALES_REPS[input];
+  // Also match on first name alone (e.g. "Daniel" or "Jack"), in case that's all
+  // the sales rep typed into Submitted By.
+  return Object.values(SALES_REPS).find(r => r.name.split(' ')[0].toLowerCase()===input) || null;
+}
 const EXPENSE_CATEGORIES = ['Diesel','Tolls','Insurance','Truck Loan','Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Other'];
 const MAINTENANCE_CATEGORIES = ['Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Truck Repair'];
 // The owner's own company trucks — independent drivers use their own trucks,
@@ -4368,14 +4376,12 @@ function buildQuotePrintHTML(q){
       <thead><tr><th>Material</th><th>Pit</th><th>Qty</th><th>Price/Unit</th><th>Material $</th><th>Tax $</th><th>Trucking $</th><th>Profit $</th><th>Profit %</th><th>Line Total</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="10">No materials on this quote.</td></tr>`}</tbody>
     </table>
-    <div class="inv-totals">
-      <table>
-        <tr><td>Material</td><td class="num">${fmtMoney(q.totalMaterial)}</td></tr>
-        <tr><td>Tax</td><td class="num">${fmtMoney(q.totalTax)}</td></tr>
-        <tr><td>Trucking</td><td class="num">${fmtMoney(q.totalTrucking)}</td></tr>
-        <tr><td>Profit</td><td class="num">${fmtMoney(q.totalProfit)}</td></tr>
-        <tr class="grand"><td>Quote Total</td><td class="num">${fmtMoney(q.totalBilled)}</td></tr>
-      </table>
+    <div style="display:flex; gap:24px; justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:2px solid var(--navy-950);">
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Material</div><div style="font-weight:700; font-size:14px;">${fmtMoney(q.totalMaterial)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Tax</div><div style="font-weight:700; font-size:14px;">${fmtMoney(q.totalTax)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Trucking</div><div style="font-weight:700; font-size:14px;">${fmtMoney(q.totalTrucking)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Profit</div><div style="font-weight:700; font-size:14px;">${fmtMoney(q.totalProfit)}</div></div>
+      <div style="text-align:center; padding-left:20px; border-left:2px solid var(--navy-950);"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Quote Total</div><div style="font-weight:700; font-size:18px; color:var(--navy-950);">${fmtMoney(q.totalBilled)}</div></div>
     </div>
     ${q.notes? `<div class="inv-terms"><strong>Notes:</strong> ${q.notes}</div>` : ''}`;
 }
@@ -4404,7 +4410,7 @@ const PROP_BAR = `background:${PROP_NAVY}; color:#fff; font-weight:700; padding:
 const PROP_CELL = `border:1px solid ${PROP_GOLD}; padding:6px 10px; font-size:12.5px;`;
 function buildQuoteProposalHTML(q){
   computeDocTotals(q);
-  const rep = SALES_REPS[(q.submittedBy||'').trim().toLowerCase()];
+  const rep = findSalesRep(q.submittedBy);
   const phone = rep ? rep.phone : BUSINESS_INFO.NFS.phone;
   const email = rep ? rep.email : '';
   const repName = rep ? rep.name : (q.submittedBy||'');
@@ -4456,7 +4462,7 @@ function buildQuoteProposalHTML(q){
         <td style="${PROP_CELL} background:${PROP_TAN};" colspan="3"></td>
       </tr>
     </table>
-    <div style="text-align:center; background:${PROP_TAN}; border:1px solid ${PROP_GOLD}; padding:6px; font-weight:700; margin-bottom:16px;">Delivery Date TBD</div>
+    <div style="text-align:center; background:${PROP_TAN}; border:1px solid ${PROP_GOLD}; padding:6px; font-weight:700; font-size:11.5px; margin-bottom:16px;">Delivery Date TBD</div>
 
     <div style="${PROP_BAR}">PROPOSAL SCHEDULE & RATES</div>
     <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
@@ -4476,6 +4482,7 @@ function buildQuoteProposalHTML(q){
       • Payment terms – Net 30<br>
       • N.O.C. needed before work commences.<br>
       • *Quotes are good for 60 days<br>
+      • Prices shown are exclusive of applicable sales tax, which will be added at time of invoicing.<br>
       • An authorized signature is required to validate the quote.
     </div>
 
