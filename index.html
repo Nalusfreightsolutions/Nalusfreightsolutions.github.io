@@ -856,6 +856,12 @@ const BUSINESS_INFO = {
   NNL: { name:'Nalu Nui Logistics', sub:'', address:'3065 Daniels Rd #1383, Winter Garden, FL', phone:'321-464-4271' },
   NFS: { name:"Nalu's Freight Solutions", sub:'nalusfreightsolutions.com', address:'3065 Daniels Rd #1383, Winter Garden, FL', phone:'321-464-4271' }
 };
+// Keyed by lowercased full name for lookup by whatever's typed in "Submitted By".
+const SALES_REPS = {
+  'jack cannon': { name:'Jack Cannon', phone:'407-288-9114', email:'Jcannon@nalusfreight.com' },
+  'sebastian cardenas': { name:'Sebastian Cardenas', phone:'407-864-5714', email:'scardenas@nalusfreight.com' },
+  'daniel galvis': { name:'Daniel Galvis', phone:'407-408-4470', email:'Dgalvis@nalusfreight.com' }
+};
 const EXPENSE_CATEGORIES = ['Diesel','Tolls','Insurance','Truck Loan','Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Other'];
 const MAINTENANCE_CATEGORIES = ['Tires','Oil Change','Brakes','Transmission','Truck Repair (Other)','Truck Repair'];
 // The owner's own company trucks — independent drivers use their own trucks,
@@ -3105,23 +3111,20 @@ function renderPitMapCompareHTML(){
   const selectedResults = pitMapResults.filter(r=>pitMapSelectedPitIds.has(r.pit.id));
   if(!selectedResults.length) return '';
   const rows = selectedResults.map(r=>({r, calc: computePitMapCalcFor(r)}));
-  const mileValues = rows.map(x=>x.calc.perMile);
-  const bestMile = Math.min(...mileValues);
   const col = (label, fn) => `<tr><td>${label}</td>${rows.map(x=>`<td class="num">${fn(x)}</td>`).join('')}</tr>`;
   return `
   <div class="tablewrap">
   <table>
     <thead><tr><th>Metric</th>${rows.map(x=>`<th>${pitLabel(x.r.pit)}</th>`).join('')}</tr></thead>
     <tbody>
-      ${col('Round Trip', x=>`${x.r.roundTripMiles.toFixed(1)} mi / ${Math.round(x.r.roundTripMinutes)} min`)}
-      ${col('Cycle Time / Load', x=>`${Math.round(x.calc.cycleMinutes)}m`)}
+      ${col('Round Trip', x=>`${x.r.roundTripMiles.toFixed(1)} mi / ${Math.round(x.calc.cycleMinutes)} min (incl. load/unload)`)}
       ${col('Loads / Day', x=>x.calc.loadsPerDay)}
       ${col('$ / Load', x=>fmtMoney(x.calc.perLoad))}
       ${col(`$ / ${pitMapCalc.capacityUnit}`, x=>x.calc.perUnit!=null? fmtMoney(x.calc.perUnit) : '—')}
       ${col('$ / Hour', x=>fmtMoney(x.calc.perHour))}
       <tr>
         <td>$ / Mile</td>
-        ${rows.map(x=>`<td class="num" style="font-weight:700; ${x.calc.belowFloor?'color:var(--bad-500);':(x.calc.perMile===bestMile?'color:var(--good-500);':'')}">${fmtMoney(x.calc.perMile)}${x.calc.belowFloor?' ⚠ below min':(x.calc.perMile===bestMile && rows.length>1?' ✓ best':'')}</td>`).join('')}
+        ${rows.map(x=>`<td class="num" style="font-weight:700; ${x.calc.belowFloor?'color:var(--bad-500);':''}">${fmtMoney(x.calc.perMile)}${x.calc.belowFloor?' ⚠ below min':''}</td>`).join('')}
       </tr>
     </tbody>
   </table>
@@ -3229,6 +3232,9 @@ function computeDocTotals(doc){
 function unitLabelSales(unitType){
   return {'Tons':'ton(s)','Yards':'yard(s)','Loads':'load(s)','Hours':'hour(s)'}[unitType] || 'unit(s)';
 }
+function unitLabelProposal(unitType){
+  return {'Tons':'TN','Yards':'YD','Loads':'LD','Hours':'HR'}[unitType] || 'UNIT';
+}
 function mkEmptyMaterialLine(){ return {id:uid(), pit:'', material:'', unit:'Tons', qtyRequested:'', qtyFinal:'', price:'', materialMode:'perUnit', taxRate:'', truckingCost:'', truckingMode:'perUnit', profitOverride:'', profitPercentOverride:''}; }
 
 let quoteMaterialDraft = [];
@@ -3308,7 +3314,10 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
           <input type="number" data-${prefix}mat-field="qtyFinal" data-${prefix}mat-idx="${i}" value="${row.qtyFinal||''}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
         </div>` : ''}
         <div style="width:95px;"><label style="font-size:10.5px; color:#5C7085; display:block;">${row.materialMode==='flat'?'Material Price (flat)':'Material Price /unit'}</label>
-          <input type="number" step="0.01" data-${prefix}mat-field="price" data-${prefix}mat-idx="${i}" value="${row.price||''}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+          <div style="position:relative;">
+            <span style="position:absolute; left:9px; top:50%; transform:translateY(-50%); color:#5C7085; font-size:12.5px; pointer-events:none;">$</span>
+            <input type="number" step="0.01" data-${prefix}mat-field="price" data-${prefix}mat-idx="${i}" value="${row.price||''}" style="width:100%; padding:7px 9px 7px 20px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+          </div>
         </div>
         <div style="width:88px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Material Is</label>
           <select data-${prefix}mat-field="materialMode" data-${prefix}mat-idx="${i}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:11.5px;">
@@ -3320,7 +3329,10 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
           <input type="number" step="0.01" data-${prefix}mat-field="taxRate" data-${prefix}mat-idx="${i}" value="${row.taxRate||''}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
         </div>
         <div style="width:100px;"><label style="font-size:10.5px; color:#5C7085; display:block;">${row.truckingMode==='flat'?'Trucking (flat)':'Trucking /unit'}</label>
-          <input type="number" step="0.01" data-${prefix}mat-field="truckingCost" data-${prefix}mat-idx="${i}" value="${row.truckingCost||''}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+          <div style="position:relative;">
+            <span style="position:absolute; left:9px; top:50%; transform:translateY(-50%); color:#5C7085; font-size:12.5px; pointer-events:none;">$</span>
+            <input type="number" step="0.01" data-${prefix}mat-field="truckingCost" data-${prefix}mat-idx="${i}" value="${row.truckingCost||''}" style="width:100%; padding:7px 9px 7px 20px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+          </div>
         </div>
         <div style="width:88px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Trucking Is</label>
           <select data-${prefix}mat-field="truckingMode" data-${prefix}mat-idx="${i}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:11.5px;">
@@ -3389,7 +3401,8 @@ function quoteRowHtml(q){
   <td><span class="pill ${q.status==='Won'||q.status==='Landed'?'paid':q.status==='Lost'?'pending':'invoiced'}">${q.status}</span></td>
   <td>
     <button class="btn btn-ghost btn-sm" data-edit-quote="${q.id}">Edit</button>
-    <button class="btn btn-ghost btn-sm" data-print-quote="${q.id}">Print</button>
+    <button class="btn btn-ghost btn-sm" data-print-quote="${q.id}">Print (Internal)</button>
+    <button class="btn btn-primary btn-sm" data-print-proposal="${q.id}">Print Proposal</button>
     ${q.status!=='Landed'? `<button class="btn btn-primary btn-sm" data-mark-landed="${q.id}">Mark Landed</button>` : ''}
     <button class="btn btn-danger btn-sm" data-del-quote="${q.id}">Delete</button>
   </td>
@@ -4315,15 +4328,21 @@ function buildInvoiceHTML(company, party, opts){
 function buildQuotePrintHTML(q){
   const biz = BUSINESS_INFO.NFS;
   computeDocTotals(q);
-  const rows = (q.materials||[]).filter(m=>m.material).map(m=>`
+  const rows = (q.materials||[]).filter(m=>m.material).map(m=>{
+    const pit = state.pits.find(p=>p.id===m.pit);
+    return `
     <tr>
       <td>${m.material}</td>
+      <td>${pit? pitLabel(pit) : '—'}</td>
       <td class="num">${m.qtyRequested||0} ${unitLabelSales(m.unit)}</td>
-      <td class="num">${fmtMoney(m.pricePerUnit)} / ${unitLabelSales(m.unit).replace(/\(s\)$/,'')}</td>
+      <td class="num">${fmtMoney(m.pricePerUnit)}/${unitLabelSales(m.unit).replace(/\(s\)$/,'')}</td>
       <td class="num">${fmtMoney(m.materialCost)}</td>
+      <td class="num">${fmtMoney(m.taxAmount)}</td>
       <td class="num">${fmtMoney(m.truckingTotal)}</td>
+      <td class="num">${fmtMoney(m.profit)}</td>
+      <td class="num">${m.effectivePercent!=null? m.effectivePercent+'%' : m.autoProfitPercent+'% auto'}</td>
       <td class="num">${fmtMoney(m.lineTotal)}</td>
-    </tr>`).join('');
+    </tr>`;}).join('');
   return `
     <div class="inv-head">
       <div>
@@ -4331,7 +4350,7 @@ function buildQuotePrintHTML(q){
         <div class="inv-sub">${biz.sub? biz.sub+'<br>' : ''}${biz.address}<br>${biz.phone}</div>
       </div>
       <div>
-        <div class="inv-title">QUOTE</div>
+        <div class="inv-title">QUOTE (Internal)</div>
         <div class="inv-meta">
           Date Submitted: <strong>${fmtDate(q.date)}</strong><br>
           Submitted By: <strong>${q.submittedBy||'—'}</strong><br>
@@ -4343,14 +4362,18 @@ function buildQuotePrintHTML(q){
       <div class="lbl">Client</div>
       <div class="name">${q.client||'—'}</div>
       ${q.jobName? `<div style="margin-top:4px;font-size:13px;color:#5C7085;">Job: ${q.jobName}</div>` : ''}
-      ${q.jobAddress? `<div style="font-size:13px;color:#5C7085;">${q.jobAddress}</div>` : ''}
+      ${q.jobAddress? `<div style="font-size:13px;color:#5C7085;">Job Address: ${q.jobAddress}</div>` : ''}
     </div>
     <table>
-      <thead><tr><th>Material</th><th>Qty</th><th>Price/Unit</th><th>Material $</th><th>Trucking $</th><th>Line Total</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="6">No materials on this quote.</td></tr>`}</tbody>
+      <thead><tr><th>Material</th><th>Pit</th><th>Qty</th><th>Price/Unit</th><th>Material $</th><th>Tax $</th><th>Trucking $</th><th>Profit $</th><th>Profit %</th><th>Line Total</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="10">No materials on this quote.</td></tr>`}</tbody>
     </table>
     <div class="inv-totals">
       <table>
+        <tr><td>Material</td><td class="num">${fmtMoney(q.totalMaterial)}</td></tr>
+        <tr><td>Tax</td><td class="num">${fmtMoney(q.totalTax)}</td></tr>
+        <tr><td>Trucking</td><td class="num">${fmtMoney(q.totalTrucking)}</td></tr>
+        <tr><td>Profit</td><td class="num">${fmtMoney(q.totalProfit)}</td></tr>
         <tr class="grand"><td>Quote Total</td><td class="num">${fmtMoney(q.totalBilled)}</td></tr>
       </table>
     </div>
@@ -4360,7 +4383,7 @@ function openQuotePrint(quoteId){
   const q = state.quotes.find(x=>x.id===quoteId);
   if(!q) return;
   const modal = document.getElementById('invoice-modal');
-  modal.classList.remove('wide');
+  modal.classList.add('wide');
   modal.innerHTML = `
     <div class="invoice-page">${buildQuotePrintHTML(q)}</div>
     <div class="modal-actions no-print">
@@ -4371,6 +4394,128 @@ function openQuotePrint(quoteId){
   document.getElementById('inv-close').onclick = closeInvoice;
   document.getElementById('inv-print').onclick = ()=>window.print();
 }
+
+/* ============================= CLIENT-FACING QUOTE PROPOSAL ============================= */
+// Matches the owner's existing paper proposal template exactly (header, project info,
+// schedule & rates table, terms, acceptance/authorization) — this is the document that
+// actually goes out to the client, separate from the internal cost-breakdown printout above.
+const PROP_NAVY = '#0B1B2B', PROP_RED = '#D8483D', PROP_GOLD = '#C9A961', PROP_TAN = '#FBF6E9';
+const PROP_BAR = `background:${PROP_NAVY}; color:#fff; font-weight:700; padding:6px 10px; font-size:12.5px; letter-spacing:.03em; text-transform:uppercase;`;
+const PROP_CELL = `border:1px solid ${PROP_GOLD}; padding:6px 10px; font-size:12.5px;`;
+function buildQuoteProposalHTML(q){
+  computeDocTotals(q);
+  const rep = SALES_REPS[(q.submittedBy||'').trim().toLowerCase()];
+  const phone = rep ? rep.phone : BUSINESS_INFO.NFS.phone;
+  const email = rep ? rep.email : '';
+  const repName = rep ? rep.name : (q.submittedBy||'');
+
+  const materials = (q.materials||[]).filter(m=>m.material);
+  const matRows = materials.map(m=>`
+    <tr>
+      <td style="${PROP_CELL}">${m.material}</td>
+      <td style="${PROP_CELL}">${m.qtyRequested||''}+/-</td>
+      <td style="${PROP_CELL}">Per ${unitLabelProposal(m.unit)}</td>
+      <td style="${PROP_CELL}">Trucking+Material+Nalu</td>
+      <td style="${PROP_CELL}">Mini- ${fmtMoney(m.pricePerUnit)}/${unitLabelProposal(m.unit)}</td>
+      <td style="${PROP_CELL}">Per ${unitLabelProposal(m.unit)}</td>
+    </tr>`).join('');
+  const blankRowCount = Math.max(0, 8 - materials.length);
+  const blankRows = Array(blankRowCount).fill(`<tr><td style="${PROP_CELL}">&nbsp;</td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td><td style="${PROP_CELL}"></td></tr>`).join('');
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif; color:#1a1a1a;">
+    <div style="text-align:center; margin-bottom:2px;">
+      <span style="font-size:24px; font-weight:800; color:${PROP_NAVY};">NALU'S FREIGHT </span><span style="font-size:24px; font-weight:800; color:${PROP_RED};">SOLUTIONS</span>
+    </div>
+    <div style="text-align:center; font-size:11px; color:#333; border-bottom:2px solid ${PROP_NAVY}; padding-bottom:8px; margin-bottom:16px;">
+      3065 Daniels Road #1383 | Winter Garden, FL 34787 | Tel ${phone}${email? ' | '+email : ''}
+    </div>
+
+    <div style="${PROP_BAR}">PROJECT INFORMATION</div>
+    <table style="width:100%; border-collapse:collapse; margin-bottom:14px;">
+      <tr>
+        <td style="${PROP_CELL} width:12%;"><strong>Date:</strong></td>
+        <td style="${PROP_CELL} width:38%; background:${PROP_TAN};">${fmtDate(q.date)}</td>
+        <td style="${PROP_CELL} width:12%;"><strong>Attn:</strong></td>
+        <td style="${PROP_CELL} width:38%; background:${PROP_TAN};">estimating/project manager</td>
+      </tr>
+      <tr>
+        <td style="${PROP_CELL}"><strong>Job Name:</strong></td>
+        <td style="${PROP_CELL} background:${PROP_TAN};">${q.jobName||''}</td>
+        <td style="${PROP_CELL}"><strong>Contractor:</strong></td>
+        <td style="${PROP_CELL} background:${PROP_TAN};">${q.client||''}</td>
+      </tr>
+      <tr>
+        <td style="${PROP_CELL}"><strong>Location:</strong></td>
+        <td style="${PROP_CELL} background:${PROP_TAN};">${q.jobAddress||''}</td>
+        <td style="${PROP_CELL}"><strong>Fax #:</strong></td>
+        <td style="${PROP_CELL} background:${PROP_TAN};"></td>
+      </tr>
+      <tr>
+        <td style="${PROP_CELL}"><strong>Email:</strong></td>
+        <td style="${PROP_CELL} background:${PROP_TAN};" colspan="3"></td>
+      </tr>
+    </table>
+    <div style="text-align:center; background:${PROP_TAN}; border:1px solid ${PROP_GOLD}; padding:6px; font-weight:700; margin-bottom:16px;">Delivery Date TBD</div>
+
+    <div style="${PROP_BAR}">PROPOSAL SCHEDULE & RATES</div>
+    <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
+      <thead><tr>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Material</th>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Quantity</th>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Unit</th>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Source</th>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Load Rate</th>
+        <th style="${PROP_CELL} background:${PROP_NAVY}; color:#fff;">Rate</th>
+      </tr></thead>
+      <tbody>${matRows}${blankRows}</tbody>
+    </table>
+
+    <div style="${PROP_BAR}">TERMS & CONDITIONS</div>
+    <div style="padding:10px 6px; font-size:12.5px; line-height:1.9;">
+      • Payment terms – Net 30<br>
+      • N.O.C. needed before work commences.<br>
+      • *Quotes are good for 60 days<br>
+      • An authorized signature is required to validate the quote.
+    </div>
+
+    <div style="${PROP_BAR}">ACCEPTANCE & AUTHORIZATION</div>
+    <div style="display:flex; gap:36px; margin-top:16px; padding:0 4px;">
+      <div style="flex:1;">
+        <div style="font-size:12px; font-weight:700; color:${PROP_NAVY};">Submitted By:</div>
+        <div style="font-family:'Brush Script MT','Segoe Script',cursive; font-size:22px; border-bottom:1px solid #999; padding:4px 0 2px; min-height:28px;">${repName}</div>
+        <div style="font-size:12px; font-weight:700; color:${PROP_NAVY}; margin-top:12px;">Date:</div>
+        <div style="border-bottom:1px solid #999; padding:4px 0 2px;">${fmtDate(q.date)}</div>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:12px; font-weight:700; color:${PROP_NAVY};">Accepted By:</div>
+        <div style="font-size:12px; font-weight:700; margin-top:10px;">Print:</div>
+        <div style="border-bottom:1px solid #999; height:22px;"></div>
+        <div style="font-size:12px; font-weight:700; margin-top:10px;">Signature:</div>
+        <div style="border-bottom:1px solid #999; height:22px;"></div>
+        <div style="font-size:12px; font-weight:700; margin-top:10px;">Title:</div>
+        <div style="border-bottom:1px solid #999; height:22px;"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openQuoteProposal(quoteId){
+  const q = state.quotes.find(x=>x.id===quoteId);
+  if(!q) return;
+  const modal = document.getElementById('invoice-modal');
+  modal.classList.remove('wide');
+  modal.innerHTML = `
+    <div class="invoice-page">${buildQuoteProposalHTML(q)}</div>
+    <div class="modal-actions no-print">
+      <button class="btn btn-ghost" id="inv-close">Close</button>
+      <button class="btn btn-primary" id="inv-print">Print / Save as PDF</button>
+    </div>`;
+  document.getElementById('invoice-overlay').style.display = 'flex';
+  document.getElementById('inv-close').onclick = closeInvoice;
+  document.getElementById('inv-print').onclick = ()=>printWithTitle('Quote Proposal - '+(q.jobName||q.client||''));
+}
+
 function buildQuoteListPrintHTML(rows, title, subtitle){
   const biz = BUSINESS_INFO.NFS;
   rows.forEach(computeDocTotals);
@@ -5131,6 +5276,7 @@ function attachHandlers(){
     });
   });
   document.querySelectorAll('[data-print-quote]').forEach(b=>b.onclick=()=>openQuotePrint(b.dataset.printQuote));
+  document.querySelectorAll('[data-print-proposal]').forEach(b=>b.onclick=()=>openQuoteProposal(b.dataset.printProposal));
 
   const qtFilterStatus = document.getElementById('qt-filter-status');
   if(qtFilterStatus) qtFilterStatus.onchange = ()=>{ quoteFilter.status = qtFilterStatus.value; render(); };
