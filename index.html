@@ -3211,6 +3211,10 @@ function computeMaterialLine(line){
     : (hasLegacyDollarOverride && costBasis>0) ? +((Number(line.profitOverride)/costBasis)*100).toFixed(2)
     : null;
   line.lineTotal = +(line.materialCost + line.taxAmount + truckingTotal + line.profit).toFixed(2);
+  // What this works out to per ton/yard/etc. — how pricing actually gets presented to the
+  // client. Tax is deliberately excluded: it's quoted/invoiced as a separate line, not
+  // blended into the per-unit rate.
+  line.pricePerUnit = qty>0 ? +((line.materialCost + truckingTotal + line.profit) / qty).toFixed(2) : 0;
   return line;
 }
 function computeDocTotals(doc){
@@ -3334,7 +3338,8 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
         Tax: <strong>${fmtMoney(computeMaterialLine({...row}).taxAmount)}</strong> ·
         Trucking: <strong>${fmtMoney(computeMaterialLine({...row}).truckingTotal)}</strong>${row.truckingMode==='flat'?' (flat)':' (per unit × qty)'} ·
         Profit: <strong>${fmtMoney(computedRow.profit)}</strong>${(row.profitPercentOverride!=null && row.profitPercentOverride!=='')? ` (${row.profitPercentOverride}% manually set)` : row.profitOverride? ' ($ override from before percentages — edit the % box to switch it over)' : ' (auto 18%)'} ·
-        Line Total: <strong>${fmtMoney(computeMaterialLine({...row}).lineTotal)}</strong>
+        Line Total: <strong>${fmtMoney(computedRow.lineTotal)}</strong> ·
+        Price per ${unitLabelSales(row.unit).replace(/\(s\)$/,'')}: <strong>${fmtMoney(computedRow.pricePerUnit)}</strong> <span style="color:#9FB0C3;">(material + trucking + profit, no tax)</span>
       </div>
     </div>`;
   }).join('');
@@ -4314,6 +4319,7 @@ function buildQuotePrintHTML(q){
     <tr>
       <td>${m.material}</td>
       <td class="num">${m.qtyRequested||0} ${unitLabelSales(m.unit)}</td>
+      <td class="num">${fmtMoney(m.pricePerUnit)} / ${unitLabelSales(m.unit).replace(/\(s\)$/,'')}</td>
       <td class="num">${fmtMoney(m.materialCost)}</td>
       <td class="num">${fmtMoney(m.truckingTotal)}</td>
       <td class="num">${fmtMoney(m.lineTotal)}</td>
@@ -4340,8 +4346,8 @@ function buildQuotePrintHTML(q){
       ${q.jobAddress? `<div style="font-size:13px;color:#5C7085;">${q.jobAddress}</div>` : ''}
     </div>
     <table>
-      <thead><tr><th>Material</th><th>Qty</th><th>Material $</th><th>Trucking $</th><th>Line Total</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="5">No materials on this quote.</td></tr>`}</tbody>
+      <thead><tr><th>Material</th><th>Qty</th><th>Price/Unit</th><th>Material $</th><th>Trucking $</th><th>Line Total</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6">No materials on this quote.</td></tr>`}</tbody>
     </table>
     <div class="inv-totals">
       <table>
