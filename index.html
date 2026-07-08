@@ -3545,7 +3545,7 @@ function completedSummaryHtml(job){
   if(!summary.length) return '';
   return summary.map(s=>{
     const pctStr = s.plannedQty? ` (${s.pct}% of ${s.plannedQty} planned)` : '';
-    return `${s.material}: ${s.qty} ${unitLabel(s.paymentType)} across ${s.loadsCount} load${s.loadsCount===1?'':'s'}${pctStr}`;
+    return `${s.material}: ${fmtQty(s.qty)} ${unitLabel(s.paymentType)} across ${s.loadsCount} load${s.loadsCount===1?'':'s'}${pctStr}`;
   }).join('<br>');
 }
 function renderSalesJobsSection(){
