@@ -3304,11 +3304,10 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
           </select>
         </div>
         <div style="flex:1; min-width:130px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Material</label>
-          <select data-${prefix}mat-field="material" data-${prefix}mat-idx="${i}" class="${prefix}mat-material" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
-            <option value="">— Select —</option>
-            ${materialOptions.map(m=>`<option ${row.material===m.name?'selected':''}>${m.name}</option>`).join('')}
-
-          </select>
+          <input type="text" data-${prefix}mat-field="material" data-${prefix}mat-idx="${i}" class="${prefix}mat-material" list="${prefix}mat-datalist-${i}" value="${row.material||''}" placeholder="Type or pick a material" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+          <datalist id="${prefix}mat-datalist-${i}">
+            ${materialOptions.map(m=>`<option value="${m.name}">`).join('')}
+          </datalist>
         </div>
         <div style="width:90px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Unit</label>
           <select data-${prefix}mat-field="unit" data-${prefix}mat-idx="${i}" class="${prefix}mat-unit" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
@@ -5236,7 +5235,7 @@ function attachHandlers(){
         syncMaterialDraftFromDOM(draft, prefix);
         draft[i].material = sel.value;
         const p = state.pits.find(x=>x.id===draft[i].pit);
-        const m = p ? (p.materials||[]).find(x=>x.name===sel.value) : null;
+        const m = p ? (p.materials||[]).find(x=>x.name.toLowerCase()===sel.value.trim().toLowerCase()) : null;
         if(m) draft[i].price = m.price || '';
         render();
       };
@@ -5252,7 +5251,7 @@ function attachHandlers(){
       };
     });
     document.querySelectorAll(`[data-${prefix}mat-idx]`).forEach(el=>{
-      if(el.tagName==='INPUT') el.onchange = ()=>{ syncMaterialDraftFromDOM(draft, prefix); render(); };
+      if(el.tagName==='INPUT' && !el.classList.contains(`${prefix}mat-material`)) el.onchange = ()=>{ syncMaterialDraftFromDOM(draft, prefix); render(); };
       if(el.tagName==='SELECT' && !el.classList.contains(`${prefix}mat-pit`) && !el.classList.contains(`${prefix}mat-material`) && !el.classList.contains(`${prefix}mat-unit`)){
         el.onchange = ()=>{ syncMaterialDraftFromDOM(draft, prefix); render(); };
       }
