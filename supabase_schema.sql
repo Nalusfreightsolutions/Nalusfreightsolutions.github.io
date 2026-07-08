@@ -235,6 +235,7 @@ create table sales_jobs (
   sales_rep text,
   notes text,
   quote_id text references quotes(id),
+  amount_paid numeric not null default 0,
   created_at timestamptz not null default now()
 );
 

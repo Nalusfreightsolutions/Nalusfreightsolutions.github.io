@@ -1200,7 +1200,7 @@ function rowToQuote(r, allMaterials){
 function salesJobToRow(j){
   return { id:j.id, client_name:j.client||null, job_name:j.jobName||null, job_address:j.jobAddress||null,
     job_started:j.jobStarted||null, job_ended:j.jobEnded||null, sales_rep:j.salesRep||null, notes:j.notes||null,
-    quote_id:j.quoteId||null };
+    quote_id:j.quoteId||null, amount_paid:numOrNull(j.amountPaid)||0 };
 }
 function materialLineToSalesJobRow(m, jobId){
   return { id:m.id, sales_job_id:jobId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
@@ -1212,6 +1212,7 @@ function materialLineToSalesJobRow(m, jobId){
 function rowToSalesJob(r, allMaterials){
   return { id:r.id, quoteId:r.quote_id||undefined, client:r.client_name||'', jobName:r.job_name||'', jobAddress:r.job_address||'',
     jobStarted:r.job_started||'', jobEnded:r.job_ended||'', salesRep:r.sales_rep||'', notes:r.notes||'',
+    amountPaid: Number(r.amount_paid)||0,
     materials: allMaterials.filter(m=>m.sales_job_id===r.id).map(m=>rowToMaterialLine(m,true)) };
 }
 
@@ -1657,8 +1658,11 @@ function render(){
 /* ============================= OVERDUE ALERTS ============================= */
 function getOverdueInvoices(){
   const today = new Date().toISOString().slice(0,10);
-  // Anything not marked Paid counts as overdue right away — no grace period.
-  const flagged = state.loads.filter(l=> l.status!=='Paid' && l.date);
+  // NNL only — a load's own revenue IS what's billed to the broker. NFS
+  // clients are billed for material + tax + trucking + profit, not just the
+  // trucking leg tracked per load, so NFS is handled separately below by
+  // getNfsClientBalances(), which prices off each landed job's real rate.
+  const flagged = state.loads.filter(l=> l.company==='NNL' && l.status!=='Paid' && l.date);
   const groups = {};
   flagged.forEach(l=>{
     const key = l.company+'|'+l.party;
@@ -1675,16 +1679,47 @@ function getOverdueInvoices(){
 function renderOverdueBanner(){
   const overdue = getOverdueInvoices();
   if(!overdue.length){
-    return `<div class="card"><div class="balancebar ok"><span>All caught up — nothing outstanding ✓</span><span></span></div></div>`;
+    return `<div class="card"><div class="balancebar ok"><span>NNL — all caught up, nothing outstanding ✓</span><span></span></div></div>`;
   }
   const totalOverdue = sum(overdue,'total');
   return `
   <div class="card" style="border-color:#F3B9B4;">
-    <h2 style="color:var(--bad-500);">⚠ Overdue — Not Yet Paid <span class="tag">${fmtMoney(totalOverdue)} outstanding</span></h2>
+    <h2 style="color:var(--bad-500);">⚠ NNL Overdue — Not Yet Paid <span class="tag">${fmtMoney(totalOverdue)} outstanding</span></h2>
     <div class="tablewrap"><table>
       <thead><tr><th>Company</th><th>Broker / Client</th><th>Days Outstanding</th><th>Amount</th></tr></thead>
       <tbody>
         ${overdue.map(o=>`<tr><td>${o.company}</td><td><strong>${o.party}</strong></td><td class="num" style="color:var(--bad-500);font-weight:700;">${o.daysOverdue}d</td><td class="num">${fmtMoney(o.total)}</td></tr>`).join('')}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+function getNfsClientBalances(){
+  return state.salesJobs
+    .map(computeJobBilledToDate)
+    .filter(j=>j.balanceDue > 0.01)
+    .sort((a,b)=> b.balanceDue - a.balanceDue);
+}
+function renderNfsBalancesBanner(){
+  const balances = getNfsClientBalances();
+  if(!balances.length){
+    return `<div class="card"><div class="balancebar ok"><span>NFS — all caught up, nothing outstanding ✓</span><span></span></div></div>`;
+  }
+  const totalDue = sum(balances,'balanceDue');
+  return `
+  <div class="card" style="border-color:#F3B9B4;">
+    <h2 style="color:var(--bad-500);">⚠ NFS Client Balances <span class="tag">${fmtMoney(totalDue)} outstanding</span></h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Client</th><th>Job Name</th><th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Add Payment</th></tr></thead>
+      <tbody>
+        ${balances.map(j=>`<tr>
+          <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
+          <td class="num">${fmtMoney(j.billedToDate)}</td><td class="num">${fmtMoney(j.amountPaid)}</td>
+          <td class="num" style="color:var(--bad-500);font-weight:700;">${fmtMoney(j.balanceDue)}</td>
+          <td><div style="display:flex; gap:6px; justify-content:flex-end;">
+            <input type="number" step="0.01" min="0" placeholder="0.00" data-payment-input="${j.id}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+            <button class="btn btn-primary btn-sm" data-add-payment="${j.id}">+ Add</button>
+          </div></td>
+        </tr>`).join('')}
       </tbody>
     </table></div>
   </div>`;
@@ -1699,8 +1734,8 @@ function renderDashboard(){
   state.salesJobs.forEach(computeDocTotals);
   const nneRev = sum(state.salesJobs,'totalBilled'), nneProfit = sum(state.salesJobs,'totalProfit');
   const pendingNNL = nnl.filter(l=>l.status!=='Paid');
-  const pendingNFS = nfs.filter(l=>l.status!=='Paid');
-  const pendingTotal = sum(pendingNNL,'revenue')+sum(pendingNFS,'revenue');
+  const nfsBalances = getNfsClientBalances();
+  const pendingTotal = sum(pendingNNL,'revenue')+sum(nfsBalances,'balanceDue');
   const wk = currentWeekEnding;
   const wkLoads = state.loads.filter(l=>weekEndingFriday(l.date)===wk);
   const wkRev = sum(wkLoads,'revenue');
@@ -1724,12 +1759,13 @@ function renderDashboard(){
     </div>
   </div>
   ${renderOverdueBanner()}
+  ${renderNfsBalancesBanner()}
   ${renderBackupReminder()}
   <div class="statgrid">
     <div class="stat amber"><div class="label">This Week's Revenue</div><div class="value">${fmtMoney(wkRev)}</div><div class="sub">Week ending ${fmtDate(wk)}</div></div>
     <div class="stat"><div class="label">Total Revenue (All Time)</div><div class="value">${fmtMoney(nnlRev+nfsRev+nneRev)}</div><div class="sub">NNL ${fmtMoney(nnlRev)} · NFS ${fmtMoney(nfsRev+nneRev)}</div></div>
     <div class="stat"><div class="label">Total Net Profit</div><div class="value">${fmtMoney(nnlNet+nfsNet+nneProfit)}</div><div class="sub">After driver pay + sales job costs</div></div>
-    <div class="stat"><div class="label">Outstanding (Not Paid)</div><div class="value">${fmtMoney(pendingTotal)}</div><div class="sub">${pendingNNL.length+pendingNFS.length} loads pending/invoiced</div></div>
+    <div class="stat"><div class="label">Outstanding (Not Paid)</div><div class="value">${fmtMoney(pendingTotal)}</div><div class="sub">${pendingNNL.length} NNL loads · ${nfsBalances.length} NFS jobs pending</div></div>
   </div>
   <div class="card">
     <h2>Nalu Nui Logistics <span class="tag">${nnl.length} loads logged</span></h2>
@@ -3237,6 +3273,29 @@ function computeDocTotals(doc){
   doc.totalProfit = sum(doc.materials||[], 'profit');
   return doc;
 }
+// What's actually billable so far on a landed job — priced off tons/yards/etc.
+// actually trucked to date (matched to loads by material name), not the full
+// quoted job total, since NFS invoices clients as loads get done rather than
+// all at once. Each material's full per-unit rate (material + tax + trucking +
+// profit) comes from computeMaterialLine's lineTotal/qty, applied to the real
+// delivered quantity from completedMaterialSummaryForJob.
+function computeJobBilledToDate(job){
+  computeDocTotals(job);
+  const completed = completedMaterialSummaryForJob(job);
+  let billed = 0;
+  (job.materials||[]).forEach(m=>{
+    if(!m.material) return;
+    const plannedQty = (m.qtyFinal!==undefined && m.qtyFinal!==null && m.qtyFinal!=='') ? Number(m.qtyFinal) : Number(m.qtyRequested)||0;
+    if(!plannedQty) return;
+    const ratePerUnit = m.lineTotal / plannedQty;
+    const actual = completed.find(c=>c.material.trim().toLowerCase()===m.material.trim().toLowerCase());
+    if(actual) billed += ratePerUnit * actual.qty;
+  });
+  job.billedToDate = +billed.toFixed(2);
+  job.amountPaid = Number(job.amountPaid)||0;
+  job.balanceDue = +(job.billedToDate - job.amountPaid).toFixed(2);
+  return job;
+}
 function unitLabelSales(unitType){
   return {'Tons':'ton(s)','Yards':'yard(s)','Loads':'load(s)','Hours':'hour(s)'}[unitType] || 'unit(s)';
 }
@@ -3555,9 +3614,10 @@ function renderSalesJobsSection(){
   if(!salesJobMaterialDraft.length) salesJobMaterialDraft = [mkEmptyMaterialLine()];
   const rows = state.salesJobs.slice().sort((a,b)=>(b.jobStarted||'').localeCompare(a.jobStarted||''));
   const clientOptions = state.clients.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<option ${f.client===c.name?'selected':''}>${c.name}</option>`).join('');
-  state.salesJobs.forEach(computeDocTotals);
+  state.salesJobs.forEach(computeJobBilledToDate);
   const totalProfit = sum(state.salesJobs,'totalProfit');
   const totalBilled = sum(state.salesJobs,'totalBilled');
+  const totalBalanceDue = sum(state.salesJobs,'balanceDue');
   const draftTotal = sum(salesJobMaterialDraft.map(m=>computeMaterialLine({...m})), 'lineTotal');
   const draftProfit = sum(salesJobMaterialDraft.map(m=>computeMaterialLine({...m})), 'profit');
   const draftCompleted = completedSummaryHtml({jobName:f.jobName, materials:salesJobMaterialDraft});
@@ -3566,6 +3626,7 @@ function renderSalesJobsSection(){
   <div class="statgrid" style="margin-bottom:16px;">
     <div class="stat amber"><div class="label">Total Landed Job Profit</div><div class="value">${fmtMoney(totalProfit)}</div></div>
     <div class="stat"><div class="label">Total Billed (All Landed Jobs)</div><div class="value">${fmtMoney(totalBilled)}</div></div>
+    <div class="stat"><div class="label">Balance Due (Billed to Date, Unpaid)</div><div class="value">${fmtMoney(totalBalanceDue)}</div></div>
   </div>
 
   <div class="card">
@@ -3600,10 +3661,12 @@ function renderSalesJobsSection(){
     <table>
       <thead><tr>
         <th>Client</th><th>Job Name</th><th>Started</th><th>Ended</th><th>Materials</th><th>Completed</th>
-        <th>Material $</th><th>Tax</th><th>Trucking</th><th>Profit</th><th>Total Billed</th><th>Rep</th><th></th>
+        <th>Material $</th><th>Tax</th><th>Trucking</th><th>Profit</th><th>Total Billed</th>
+        <th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Rep</th><th></th>
       </tr></thead>
       <tbody>
         ${rows.length? rows.map(j=>{
+          computeJobBilledToDate(j);
           return `<tr>
             <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
             <td>${fmtDate(j.jobStarted)}</td><td>${fmtDate(j.jobEnded)}</td>
@@ -3613,10 +3676,13 @@ function renderSalesJobsSection(){
             <td style="font-size:12px;">${completedSummaryHtml(j) || '—'}</td>
             <td class="num">${fmtMoney(j.totalMaterial)}</td><td class="num">${fmtMoney(j.totalTax)}</td>
             <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
-            <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td><td>${j.salesRep||''}</td>
+            <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td>
+            <td class="num">${fmtMoney(j.billedToDate)}</td><td class="num">${fmtMoney(j.amountPaid)}</td>
+            <td class="num" style="${j.balanceDue>0.01?'color:var(--bad-500);font-weight:700;':''}">${fmtMoney(j.balanceDue)}</td>
+            <td>${j.salesRep||''}</td>
             <td><button class="btn btn-ghost btn-sm" data-edit-salesjob="${j.id}">Edit</button> <button class="btn btn-danger btn-sm" data-del-salesjob="${j.id}">Delete</button></td>
           </tr>`;
-        }).join('') : `<tr><td colspan="13"><div class="empty">No landed jobs yet — win a quote and mark it Landed, or add one directly.</div></td></tr>`}
+        }).join('') : `<tr><td colspan="16"><div class="empty">No landed jobs yet — win a quote and mark it Landed, or add one directly.</div></td></tr>`}
       </tbody>
     </table>
     </div>
@@ -5602,6 +5668,18 @@ function attachHandlers(){
   document.querySelectorAll('[data-invoice]').forEach(b=>b.onclick=()=>{
     const [company, partyEnc, startDate, endDate] = b.dataset.invoice.split('|');
     openInvoice(company, decodeURIComponent(partyEnc), {startDate, endDate});
+  });
+
+  // NFS client balance payments
+  document.querySelectorAll('[data-add-payment]').forEach(b=>b.onclick=()=>{
+    const jobId = b.dataset.addPayment;
+    const input = document.querySelector(`[data-payment-input="${jobId}"]`);
+    const amount = Number(input && input.value)||0;
+    if(amount<=0){ alert('Enter a payment amount first.'); return; }
+    const job = state.salesJobs.find(j=>j.id===jobId);
+    if(!job) return;
+    job.amountPaid = +((Number(job.amountPaid)||0) + amount).toFixed(2);
+    persist(); render();
   });
 
   // Excel export
