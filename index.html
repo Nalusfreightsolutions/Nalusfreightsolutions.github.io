@@ -1167,12 +1167,13 @@ function materialLineToQuoteRow(m, quoteId){
   return { id:m.id, quote_id:quoteId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
     qty_requested:numOrNull(m.qtyRequested), price:numOrNull(m.price), material_mode:m.materialMode||'perUnit',
     tax_rate:numOrNull(m.taxRate), trucking_cost:numOrNull(m.truckingCost), trucking_mode:m.truckingMode||'perUnit',
-    profit_override:numOrNull(m.profitOverride) };
+    profit_override:numOrNull(m.profitOverride), profit_percent_override:numOrNull(m.profitPercentOverride) };
 }
 function rowToMaterialLine(r, includeQtyFinal){
   const line = { id:r.id, pit:r.pit_id||'', material:r.material||'', unit:r.unit||'Tons', qtyRequested:r.qty_requested??'',
     price:r.price??'', materialMode:r.material_mode||'perUnit', taxRate:r.tax_rate??'', truckingCost:r.trucking_cost??'',
-    truckingMode:r.trucking_mode||'perUnit', profitOverride:r.profit_override??'' };
+    truckingMode:r.trucking_mode||'perUnit', profitOverride:r.profit_override??'',
+    profitPercentOverride:r.profit_percent_override??'' };
   if(includeQtyFinal) line.qtyFinal = r.qty_final??'';
   return line;
 }
@@ -1191,7 +1192,8 @@ function materialLineToSalesJobRow(m, jobId){
   return { id:m.id, sales_job_id:jobId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
     qty_requested:numOrNull(m.qtyRequested), qty_final:numOrNull(m.qtyFinal), price:numOrNull(m.price),
     material_mode:m.materialMode||'perUnit', tax_rate:numOrNull(m.taxRate), trucking_cost:numOrNull(m.truckingCost),
-    trucking_mode:m.truckingMode||'perUnit', profit_override:numOrNull(m.profitOverride) };
+    trucking_mode:m.truckingMode||'perUnit', profit_override:numOrNull(m.profitOverride),
+    profit_percent_override:numOrNull(m.profitPercentOverride) };
 }
 function rowToSalesJob(r, allMaterials){
   return { id:r.id, quoteId:r.quote_id||undefined, client:r.client_name||'', jobName:r.job_name||'', jobAddress:r.job_address||'',
@@ -3188,11 +3190,26 @@ function computeMaterialLine(line){
   const truckingTotal = +((truckingMode==='flat' ? truckingRaw : qty * truckingRaw)).toFixed(2);
   line.truckingTotal = truckingTotal;
   line.taxAmount = +(line.materialCost * (taxRate/100)).toFixed(2);
-  const autoProfit = +((line.materialCost + truckingTotal) * PROFIT_MARGIN).toFixed(2);
-  line.profit = (line.profitOverride!==undefined && line.profitOverride!==null && line.profitOverride!=='')
-    ? +(Number(line.profitOverride)).toFixed(2)
-    : autoProfit;
+  const costBasis = line.materialCost + truckingTotal;
+  const autoProfit = +(costBasis * PROFIT_MARGIN).toFixed(2);
+  const hasPercentOverride = line.profitPercentOverride!==undefined && line.profitPercentOverride!==null && line.profitPercentOverride!=='';
+  const hasLegacyDollarOverride = line.profitOverride!==undefined && line.profitOverride!==null && line.profitOverride!=='';
+  if(hasPercentOverride){
+    line.profit = +(costBasis * (Number(line.profitPercentOverride)/100)).toFixed(2);
+  } else if(hasLegacyDollarOverride){
+    // Pre-percentage quotes/jobs that had a manually-typed $ profit amount —
+    // honored as-is so nothing already saved silently changes.
+    line.profit = +(Number(line.profitOverride)).toFixed(2);
+  } else {
+    line.profit = autoProfit;
+  }
   line.autoProfit = autoProfit;
+  line.autoProfitPercent = PROFIT_MARGIN*100;
+  // For display: what percent to show in the box, even for legacy $ overrides
+  // that haven't been touched under the new system yet.
+  line.effectivePercent = hasPercentOverride ? Number(line.profitPercentOverride)
+    : (hasLegacyDollarOverride && costBasis>0) ? +((Number(line.profitOverride)/costBasis)*100).toFixed(2)
+    : null;
   line.lineTotal = +(line.materialCost + line.taxAmount + truckingTotal + line.profit).toFixed(2);
   return line;
 }
@@ -3208,7 +3225,7 @@ function computeDocTotals(doc){
 function unitLabelSales(unitType){
   return {'Tons':'ton(s)','Yards':'yard(s)','Loads':'load(s)','Hours':'hour(s)'}[unitType] || 'unit(s)';
 }
-function mkEmptyMaterialLine(){ return {id:uid(), pit:'', material:'', unit:'Tons', qtyRequested:'', qtyFinal:'', price:'', materialMode:'perUnit', taxRate:'', truckingCost:'', truckingMode:'perUnit', profitOverride:''}; }
+function mkEmptyMaterialLine(){ return {id:uid(), pit:'', material:'', unit:'Tons', qtyRequested:'', qtyFinal:'', price:'', materialMode:'perUnit', taxRate:'', truckingCost:'', truckingMode:'perUnit', profitOverride:'', profitPercentOverride:''}; }
 
 let quoteMaterialDraft = [];
 let salesJobMaterialDraft = [];
@@ -3255,6 +3272,10 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
   return draft.map((row,i)=>{
     const pit = pitOptions.find(p=>p.id===row.pit);
     const materialOptions = pit ? (pit.materials||[]) : [];
+    const computedRow = computeMaterialLine({...row});
+    const displayPercent = (row.profitPercentOverride!=null && row.profitPercentOverride!=='')
+      ? row.profitPercentOverride
+      : (computedRow.effectivePercent!=null ? computedRow.effectivePercent : '');
     return `
     <div style="border:1.5px solid var(--steel-200); border-radius:8px; padding:12px; margin-top:10px;">
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
@@ -3303,8 +3324,8 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
             <option value="flat" ${row.truckingMode==='flat'?'selected':''}>Flat Price</option>
           </select>
         </div>
-        <div style="width:105px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Profit (18% auto)</label>
-          <input type="number" step="0.01" data-${prefix}mat-field="profitOverride" data-${prefix}mat-idx="${i}" value="${row.profitOverride||''}" placeholder="${fmtMoney(computeMaterialLine({...row}).autoProfit)}" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+        <div style="width:90px;"><label style="font-size:10.5px; color:#5C7085; display:block;">Profit % (18 auto)</label>
+          <input type="number" step="0.01" data-${prefix}mat-field="profitPercentOverride" data-${prefix}mat-idx="${i}" value="${displayPercent}" placeholder="18" style="width:100%; padding:7px 9px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
         </div>
         <button class="btn btn-danger btn-sm" data-remove-${prefix}mat="${i}">✕</button>
       </div>
@@ -3312,7 +3333,7 @@ function renderMaterialLineRows(draft, prefix, showQtyFinal){
         Material Cost: <strong>${fmtMoney(computeMaterialLine({...row}).materialCost)}</strong>${row.materialMode==='flat'?' (flat)':' (per unit × qty)'} ·
         Tax: <strong>${fmtMoney(computeMaterialLine({...row}).taxAmount)}</strong> ·
         Trucking: <strong>${fmtMoney(computeMaterialLine({...row}).truckingTotal)}</strong>${row.truckingMode==='flat'?' (flat)':' (per unit × qty)'} ·
-        Profit: <strong>${fmtMoney(computeMaterialLine({...row}).profit)}</strong>${row.profitOverride? ' (manually set)' : ' (auto 18%)'} ·
+        Profit: <strong>${fmtMoney(computedRow.profit)}</strong>${(row.profitPercentOverride!=null && row.profitPercentOverride!=='')? ` (${row.profitPercentOverride}% manually set)` : row.profitOverride? ' ($ override from before percentages — edit the % box to switch it over)' : ' (auto 18%)'} ·
         Line Total: <strong>${fmtMoney(computeMaterialLine({...row}).lineTotal)}</strong>
       </div>
     </div>`;
@@ -3405,7 +3426,7 @@ function renderQuotesSection(){
       <button class="btn btn-ghost btn-sm" id="qt-add-material" style="margin-top:8px;">+ Add Material</button>
       <div style="text-align:right; font-size:14px; font-weight:700; margin-top:8px;">Quote Total: ${fmtMoney(draftTotal)}</div>
     </div>
-    <div class="note">Profit defaults to 18% of (Material Cost + Trucking Cost) per material — type your own amount in the Profit field to override it for that line.</div>
+    <div class="note">Profit defaults to 18% of (Material Cost + Trucking Cost) per material — type a different percentage in the Profit % field to override it for that line.</div>
 
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button class="btn btn-primary" id="qt-save">${editing? 'Save Changes' : '+ Log Quote'}</button>
@@ -3541,7 +3562,7 @@ function renderSalesJobsSection(){
       <button class="btn btn-ghost btn-sm" id="sj-add-material" style="margin-top:8px;">+ Add Material</button>
       <div style="text-align:right; font-size:14px; font-weight:700; margin-top:8px;">Job Total Billed: ${fmtMoney(draftTotal)} &nbsp;·&nbsp; Profit: ${fmtMoney(draftProfit)}</div>
     </div>
-    <div class="note">Pick a Pit to auto-populate its materials list. Tax Rate auto-fills from the Pit's rate when you pick a material — adjust per line if needed. "Per Unit" multiplies the price/rate by quantity; "Flat Price" uses that number as-is regardless of quantity — use Flat for mom-and-pop pit deals or flat-rate hauls. Profit defaults to 18% of (Material Cost + Trucking Cost) per material, but you can type your own amount in the Profit field to override it for that line.</div>
+    <div class="note">Pick a Pit to auto-populate its materials list. Tax Rate auto-fills from the Pit's rate when you pick a material — adjust per line if needed. "Per Unit" multiplies the price/rate by quantity; "Flat Price" uses that number as-is regardless of quantity — use Flat for mom-and-pop pit deals or flat-rate hauls. Profit defaults to 18% of (Material Cost + Trucking Cost) per material, but you can type a different percentage in the Profit % field to override it for that line.</div>
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button class="btn btn-primary" id="sj-save">${editing? 'Save Changes' : '+ Add Landed Job'}</button>
       ${editing? `<button class="btn btn-ghost" id="sj-cancel">Cancel</button>` : ''}

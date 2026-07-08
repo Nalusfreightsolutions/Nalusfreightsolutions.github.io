@@ -220,7 +220,8 @@ create table quote_materials (
   tax_rate numeric,
   trucking_cost numeric,
   trucking_mode text default 'perUnit',
-  profit_override numeric
+  profit_override numeric,
+  profit_percent_override numeric
 );
 
 alter table quotes enable row level security;
@@ -260,7 +261,8 @@ create table sales_job_materials (
   tax_rate numeric,
   trucking_cost numeric,
   trucking_mode text default 'perUnit',
-  profit_override numeric
+  profit_override numeric,
+  profit_percent_override numeric
 );
 
 alter table sales_jobs enable row level security;
