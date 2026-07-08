@@ -4528,15 +4528,41 @@ function openQuoteProposal(quoteId){
 function buildQuoteListPrintHTML(rows, title, subtitle){
   const biz = BUSINESS_INFO.NFS;
   rows.forEach(computeDocTotals);
-  const total = sum(rows,'totalBilled');
-  const body = rows.map(q=>`
-    <tr>
-      <td>${fmtDate(q.date)}</td><td>${q.client||''}</td><td>${q.jobName||''}</td>
-      <td>${(q.materials||[]).filter(m=>m.material).map(m=>`${m.material} (${m.qtyRequested||0} ${unitLabelSales(m.unit)})`).join('<br>') || '—'}</td>
-      <td class="num">${fmtMoney(q.totalBilled)}</td>
-      <td>${q.submittedBy||''}</td>
-      <td>${q.status}</td>
-    </tr>`).join('');
+  const monthMaterial = sum(rows,'totalMaterial');
+  const monthTax = sum(rows,'totalTax');
+  const monthTrucking = sum(rows,'totalTrucking');
+  const monthProfit = sum(rows,'totalProfit');
+  const monthTotal = sum(rows,'totalBilled');
+
+  const sections = rows.map(q=>{
+    const matRows = (q.materials||[]).filter(m=>m.material).map(m=>{
+      const pit = state.pits.find(p=>p.id===m.pit);
+      return `
+      <tr>
+        <td>${m.material}</td>
+        <td>${pit? pitLabel(pit) : '—'}</td>
+        <td class="num">${m.qtyRequested||0} ${unitLabelSales(m.unit)}</td>
+        <td class="num">${fmtMoney(m.pricePerUnit)}/${unitLabelSales(m.unit).replace(/\(s\)$/,'')}</td>
+        <td class="num">${fmtMoney(m.materialCost)}</td>
+        <td class="num">${fmtMoney(m.taxAmount)}</td>
+        <td class="num">${fmtMoney(m.truckingTotal)}</td>
+        <td class="num">${fmtMoney(m.profit)}</td>
+        <td class="num">${m.effectivePercent!=null? m.effectivePercent+'%' : m.autoProfitPercent+'% auto'}</td>
+        <td class="num">${fmtMoney(m.lineTotal)}</td>
+      </tr>`;}).join('');
+    return `
+    <div style="margin-top:16px;">
+      <div style="font-weight:700; font-size:13.5px; color:var(--navy-950);">${fmtDate(q.date)} — ${q.client||'—'}${q.jobName? ' / '+q.jobName : ''}</div>
+      <div style="font-size:12px; color:#5C7085; margin-bottom:4px;">Submitted By: ${q.submittedBy||'—'} &nbsp;|&nbsp; Status: ${q.status}</div>
+      <table>
+        <thead><tr><th>Material</th><th>Pit</th><th>Qty</th><th>Price/Unit</th><th>Material $</th><th>Tax $</th><th>Trucking $</th><th>Profit $</th><th>Profit %</th><th>Line Total</th></tr></thead>
+        <tbody>
+          ${matRows || `<tr><td colspan="10">No materials on this quote.</td></tr>`}
+          <tr class="grouprow"><td colspan="9">Total for ${q.jobName||q.client||'Quote'}</td><td class="num">${fmtMoney(q.totalBilled)}</td></tr>
+        </tbody>
+      </table>
+    </div>`;}).join('');
+
   return `
     <div class="inv-head">
       <div>
@@ -4548,14 +4574,13 @@ function buildQuoteListPrintHTML(rows, title, subtitle){
         ${subtitle? `<div class="inv-meta">${subtitle}</div>` : ''}
       </div>
     </div>
-    <table>
-      <thead><tr><th>Date</th><th>Client</th><th>Job Name</th><th>Materials</th><th>Quote Total</th><th>Submitted By</th><th>Status</th></tr></thead>
-      <tbody>${body || `<tr><td colspan="7">No quotes to show.</td></tr>`}</tbody>
-    </table>
-    <div class="inv-totals">
-      <table>
-        <tr class="grand"><td>${rows.length} Quote${rows.length===1?'':'s'} — Total</td><td class="num">${fmtMoney(total)}</td></tr>
-      </table>
+    ${sections || `<div class="note" style="margin-top:14px;">No quotes to show.</div>`}
+    <div style="display:flex; gap:24px; justify-content:flex-end; margin-top:20px; padding-top:12px; border-top:2px solid var(--navy-950);">
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Material</div><div style="font-weight:700; font-size:14px;">${fmtMoney(monthMaterial)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Tax</div><div style="font-weight:700; font-size:14px;">${fmtMoney(monthTax)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Trucking</div><div style="font-weight:700; font-size:14px;">${fmtMoney(monthTrucking)}</div></div>
+      <div style="text-align:center;"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">Profit</div><div style="font-weight:700; font-size:14px;">${fmtMoney(monthProfit)}</div></div>
+      <div style="text-align:center; padding-left:20px; border-left:2px solid var(--navy-950);"><div style="font-size:11px; color:#5C7085; text-transform:uppercase; letter-spacing:.03em;">${rows.length} Quote${rows.length===1?'':'s'} — Total</div><div style="font-weight:700; font-size:18px; color:var(--navy-950);">${fmtMoney(monthTotal)}</div></div>
     </div>`;
 }
 function openQuoteListPrint(rows, title, subtitle){

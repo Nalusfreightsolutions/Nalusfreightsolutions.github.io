@@ -80,7 +80,6 @@ create policy "owner full access loads" on loads for all
 create policy "sales_rep nfs access loads" on loads for all
   using (company = 'NFS' and not is_owner() and auth.uid() is not null)
   with check (company = 'NFS' and not is_owner() and auth.uid() is not null);
-create policy "TEMP anon full access loads" on loads for all using (true) with check (true);
 
 -- ---------- 3. EXPENSES ----------
 create table expenses (
@@ -102,7 +101,6 @@ create policy "owner full access expenses" on expenses for all
 create policy "sales_rep nfs access expenses" on expenses for all
   using (company = 'NFS' and not is_owner() and auth.uid() is not null)
   with check (company = 'NFS' and not is_owner() and auth.uid() is not null);
-create policy "TEMP anon full access expenses" on expenses for all using (true) with check (true);
 
 -- ---------- 4. DRIVER COMPLIANCE (owner only — NNL-only, sensitive) ----------
 create table compliance (
@@ -119,7 +117,6 @@ alter table compliance enable row level security;
 
 create policy "owner only compliance" on compliance for all
   using (is_owner()) with check (is_owner());
-create policy "TEMP anon full access compliance" on compliance for all using (true) with check (true);
 
 -- ---------- 5. CLIENTS + CONTACTS ----------
 create table clients (
@@ -145,8 +142,6 @@ create policy "any authenticated user full access clients" on clients for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "any authenticated user full access client_contacts" on client_contacts for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
-create policy "TEMP anon full access clients" on clients for all using (true) with check (true);
-create policy "TEMP anon full access client_contacts" on client_contacts for all using (true) with check (true);
 
 -- ---------- 6. PITS + CONTACTS + MATERIALS/DUMP FEES ----------
 create table pits (
@@ -191,9 +186,6 @@ create policy "any authenticated user full access pit_contacts" on pit_contacts 
   using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "any authenticated user full access pit_materials" on pit_materials for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
-create policy "TEMP anon full access pits" on pits for all using (true) with check (true);
-create policy "TEMP anon full access pit_contacts" on pit_contacts for all using (true) with check (true);
-create policy "TEMP anon full access pit_materials" on pit_materials for all using (true) with check (true);
 
 -- ---------- 7. QUOTES (+ multiple material line items) ----------
 create table quotes (
@@ -231,8 +223,6 @@ create policy "any authenticated user full access quotes" on quotes for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "any authenticated user full access quote_materials" on quote_materials for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
-create policy "TEMP anon full access quotes" on quotes for all using (true) with check (true);
-create policy "TEMP anon full access quote_materials" on quote_materials for all using (true) with check (true);
 
 -- ---------- 8. SALES JOBS / LANDED JOBS (+ multiple material line items) ----------
 create table sales_jobs (
@@ -272,8 +262,6 @@ create policy "any authenticated user full access sales_jobs" on sales_jobs for 
   using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "any authenticated user full access sales_job_materials" on sales_job_materials for all
   using (auth.uid() is not null) with check (auth.uid() is not null);
-create policy "TEMP anon full access sales_jobs" on sales_jobs for all using (true) with check (true);
-create policy "TEMP anon full access sales_job_materials" on sales_job_materials for all using (true) with check (true);
 
 -- ---------- 9. ANNUAL / TAX ITEMS ----------
 create table annual_items (
@@ -292,7 +280,6 @@ create policy "owner full access annual_items" on annual_items for all
 create policy "sales_rep nfs access annual_items" on annual_items for all
   using (company = 'NFS' and not is_owner() and auth.uid() is not null)
   with check (company = 'NFS' and not is_owner() and auth.uid() is not null);
-create policy "TEMP anon full access annual_items" on annual_items for all using (true) with check (true);
 
 -- ---------- 10. INVOICE COUNTERS ----------
 create table invoice_counters (
@@ -308,7 +295,6 @@ create policy "owner full access invoice_counters" on invoice_counters for all
 create policy "sales_rep nfs access invoice_counters" on invoice_counters for all
   using (company = 'NFS' and not is_owner() and auth.uid() is not null)
   with check (company = 'NFS' and not is_owner() and auth.uid() is not null);
-create policy "TEMP anon full access invoice_counters" on invoice_counters for all using (true) with check (true);
 
 -- ---------- 10b. ATTACHMENTS (files for contacts, pits, driver compliance) ----------
 -- Same child-table pattern as client_contacts / pit_contacts / pit_materials, so
