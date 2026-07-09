@@ -69,6 +69,11 @@ create table loads (
   material text,
   broker text,
   notes text,
+  -- Locked in at invoice time (NFS client invoices): the rate/tax this load
+  -- was actually billed at, so editing a job's pricing later can't silently
+  -- change an invoice already sent. Null until the load is invoiced.
+  invoiced_rate numeric,
+  invoiced_tax numeric,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
