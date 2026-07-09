@@ -1362,7 +1362,6 @@ function renderNfsBalancesBanner(){
 /* ============================= DASHBOARD ============================= */
 function renderDashboard(){
   const nfs = loadsFor('NFS');
-  const nfsPay = sum(nfs,'driverPay');
   state.salesJobs.forEach(computeJobBilledToDate);
   const billedToDate = sum(state.salesJobs,'billedToDate');
   const profitToDate = sum(state.salesJobs,'profitToDate');
@@ -1400,16 +1399,7 @@ function renderDashboard(){
     <div class="stat"><div class="label">Total Profit (Billed to Date)</div><div class="value">${fmtMoney(profitToDate)}</div></div>
     <div class="stat"><div class="label">Outstanding (Not Paid)</div><div class="value">${fmtMoney(pendingTotal)}</div><div class="sub">${nfsBalances.length} NFS jobs pending</div></div>
   </div>
-  <div class="card">
-    <h2>Nalu's Freight Solutions <span class="tag">${nfs.length} loads logged</span></h2>
-    <div class="note">"Billed to Date" and "Profit to Date" only count tons that have actually been trucked — a job with materials priced but no completed loads yet (like a job you just landed) contributes $0 until loads start coming in. Driver Pay below is trucking-only, separate from material billing.</div>
-    <div class="statgrid" style="grid-template-columns:repeat(3,1fr); margin-bottom:0;">
-      <div class="stat" style="background:var(--navy-800)"><div class="label">Billed to Date</div><div class="value">${fmtMoney(billedToDate)}</div></div>
-      <div class="stat" style="background:var(--navy-800)"><div class="label">Driver Pay</div><div class="value">${fmtMoney(nfsPay)}</div></div>
-      <div class="stat" style="background:var(--navy-800)"><div class="label">Profit to Date</div><div class="value">${fmtMoney(profitToDate)}</div></div>
-    </div>
-  </div>
-  <div class="note">Tip: use the <strong>Weekly Invoice &amp; Payroll</strong> tab every Friday — it auto-groups this week's loads by client and driver so you know exactly what to invoice and what to pay, no retyping names.</div>
+  <div class="note">${nfs.length} NFS loads logged. "Billed to Date" and "Profit to Date" above only count tons actually trucked — a job with materials priced but no completed loads yet contributes $0 until loads start coming in. Driver pay detail lives on the Financials tab. Tip: use the <strong>Weekly Invoice &amp; Payroll</strong> tab every Friday — it auto-groups this week's loads by client and driver so you know exactly what to invoice and what to pay, no retyping names.</div>
   `;
 }
 
@@ -2736,24 +2726,32 @@ function computeDocTotals(doc){
 function computeJobBilledToDate(job){
   computeDocTotals(job);
   const loads = completedLoadsForJob(job);
-  let billed = 0, profit = 0;
+  let billed = 0, profit = 0, materialCost = 0, truckingCost = 0, tax = 0;
   loads.forEach(l=>{
     const rt = rateAndTaxForLoad(l);
     if(!rt.matched) return;
     const qty = Number(l.qty)||0;
     billed += qty * rt.rate + rt.tax;
-    // Profit-to-date doesn't need invoice-locking like the client rate does —
-    // it's an internal figure, not something billed to the client — so it's
-    // fine for it to reflect the job's current cost/profit assumptions.
+    tax += rt.tax;
+    // Profit/material/trucking-to-date don't need invoice-locking like the
+    // client rate does — they're internal figures, never sent to the client —
+    // so it's fine for them to reflect the job's current cost/profit inputs.
     const match = findJobMaterialForLoad(l);
     if(match){
       const m = match.material;
       const plannedQty = (m.qtyFinal!=null && m.qtyFinal!=='') ? Number(m.qtyFinal) : Number(m.qtyRequested)||0;
-      if(plannedQty) profit += qty * (m.profit/plannedQty);
+      if(plannedQty){
+        profit += qty * (m.profit/plannedQty);
+        materialCost += qty * (m.materialCost/plannedQty);
+        truckingCost += qty * (m.truckingTotal/plannedQty);
+      }
     }
   });
   job.billedToDate = +billed.toFixed(2);
   job.profitToDate = +profit.toFixed(2);
+  job.materialCostToDate = +materialCost.toFixed(2);
+  job.truckingCostToDate = +truckingCost.toFixed(2);
+  job.taxToDate = +tax.toFixed(2);
   job.amountPaid = Number(job.amountPaid)||0;
   job.balanceDue = +(job.billedToDate - job.amountPaid).toFixed(2);
   return job;
@@ -3571,7 +3569,12 @@ function computeQuarterly(company, year){
   return [1,2,3,4].map(q=>{
     const qLoads = loads.filter(l=>quarterOf(l.date)===q);
     const qExp = expenses.filter(e=>quarterOf(e.date)===q);
-    const revenue = sum(qLoads,'revenue'), driverPay = sum(qLoads,'driverPay'), opex = sum(qExp,'amount');
+    // Real client-billed revenue (material + trucking + profit + tax) per load
+    // actually delivered that quarter — not trucking-only pass-through revenue.
+    // Only counts loads that actually happened (have a date in this quarter),
+    // never a job's full quoted/projected total.
+    const revenue = qLoads.reduce((a,l)=>{ const rt=rateAndTaxForLoad(l); return a + (rt.matched? (Number(l.qty)||0)*rt.rate + rt.tax : 0); }, 0);
+    const driverPay = sum(qLoads,'driverPay'), opex = sum(qExp,'amount');
     return { q, revenue, driverPay, opex, net: revenue-driverPay-opex, loadCount:qLoads.length };
   });
 }
@@ -3664,21 +3667,21 @@ function drawReportsCharts(company){
 }
 
 function renderNfsSalesReportCard(year){
-  const jobs = state.salesJobs.filter(j=>(j.jobStarted||'').startsWith(String(year))).map(computeDocTotals);
-  const revenue = sum(jobs,'totalBilled'), material = sum(jobs,'totalMaterial'),
-        trucking = jobs.reduce((a,j)=>a+(j.totalTrucking||0),0),
-        tax = sum(jobs,'totalTax'), profit = sum(jobs,'totalProfit');
+  const jobs = state.salesJobs.filter(j=>(j.jobStarted||'').startsWith(String(year))).map(computeJobBilledToDate);
+  const revenue = sum(jobs,'billedToDate'), material = sum(jobs,'materialCostToDate'),
+        trucking = sum(jobs,'truckingCostToDate'),
+        tax = sum(jobs,'taxToDate'), profit = sum(jobs,'profitToDate');
   return `
   <div class="card">
     <h2>NFS Sales Team — Landed Jobs <span class="tag">${year} · ${jobs.length} job${jobs.length===1?'':'s'}</span></h2>
     <div class="statgrid" style="grid-template-columns:repeat(5,1fr);">
-      <div class="stat"><div class="label">Total Billed</div><div class="value">${fmtMoney(revenue)}</div></div>
+      <div class="stat"><div class="label">Total Billed to Date</div><div class="value">${fmtMoney(revenue)}</div></div>
       <div class="stat"><div class="label">Material Cost</div><div class="value">${fmtMoney(material)}</div></div>
       <div class="stat"><div class="label">Trucking Cost</div><div class="value">${fmtMoney(trucking)}</div></div>
       <div class="stat"><div class="label">Sales Tax Collected</div><div class="value">${fmtMoney(tax)}</div></div>
       <div class="stat amber"><div class="label">Profit</div><div class="value">${fmtMoney(profit)}</div></div>
     </div>
-    <div class="note">Sales tax is pass-through (collected for the state, not company revenue) — it's shown here for reference, not counted toward profit.</div>
+    <div class="note">Only counts tons actually delivered so far, not the full quoted total on jobs that haven't been trucked yet. Sales tax is pass-through (collected for the state, not company revenue) — it's shown here for reference, not counted toward profit.</div>
   </div>
   `;
 }
