@@ -2726,20 +2726,19 @@ function computeDocTotals(doc){
 // What's actually billable so far on a landed job — priced off tons/yards/etc.
 // actually trucked to date (matched to loads by material name), not the full
 // quoted job total, since NFS invoices clients as loads get done rather than
-// all at once. Each material's full per-unit rate (material + tax + trucking +
-// profit) comes from computeMaterialLine's lineTotal/qty, applied to the real
-// delivered quantity from completedMaterialSummaryForJob.
+// all at once. Uses the SAME per-load rate/tax logic as the real invoice
+// (rateAndTaxForLoad, defined further down) — already-invoiced loads use their
+// locked-in billed rate/tax, not a live recalculation from current job pricing
+// (which may have since changed, or may include tax the actual invoice didn't
+// bill) — so this always matches what was really invoiced, not an estimate.
 function computeJobBilledToDate(job){
   computeDocTotals(job);
-  const completed = completedMaterialSummaryForJob(job);
+  const loads = completedLoadsForJob(job);
   let billed = 0;
-  (job.materials||[]).forEach(m=>{
-    if(!m.material) return;
-    const plannedQty = (m.qtyFinal!==undefined && m.qtyFinal!==null && m.qtyFinal!=='') ? Number(m.qtyFinal) : Number(m.qtyRequested)||0;
-    if(!plannedQty) return;
-    const ratePerUnit = m.lineTotal / plannedQty;
-    const actual = completed.find(c=>c.material.trim().toLowerCase()===m.material.trim().toLowerCase());
-    if(actual) billed += ratePerUnit * actual.qty;
+  loads.forEach(l=>{
+    const rt = rateAndTaxForLoad(l);
+    if(!rt.matched) return;
+    billed += (Number(l.qty)||0) * rt.rate + rt.tax;
   });
   job.billedToDate = +billed.toFixed(2);
   job.amountPaid = Number(job.amountPaid)||0;
