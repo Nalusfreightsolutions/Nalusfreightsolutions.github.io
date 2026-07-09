@@ -667,12 +667,19 @@ function renderDashboard(){
   const nnl = loadsFor('NNL');
   const nnlRev = sum(nnl,'revenue');
   const nnlPay = sum(nnl,'driverPay');
-  const nnlNet = sum(nnl,'net');
+  const nnlExp = sum(state.expenses,'amount');
+  // "Net" per load (revenue - driver pay) never accounted for actual truck
+  // expenses (fuel, tolls, insurance, repairs) — real profit has to subtract
+  // those too, not just driver pay.
+  const nnlNet = +(nnlRev - nnlPay - nnlExp).toFixed(2);
   const pendingNNL = nnl.filter(l=>l.status!=='Paid');
   const pendingTotal = sum(pendingNNL,'revenue');
   const wk = currentWeekEnding;
   const wkLoads = state.loads.filter(l=>weekEndingFriday(l.date)===wk);
   const wkRev = sum(wkLoads,'revenue');
+  const wkPay = sum(wkLoads,'driverPay');
+  const wkExp = sum(state.expenses.filter(e=>e.date && weekEndingFriday(e.date)===wk), 'amount');
+  const wkNet = +(wkRev - wkPay - wkExp).toFixed(2);
 
   return `
   <div class="pagehead">
@@ -695,16 +702,17 @@ function renderDashboard(){
   ${renderOverdueBanner()}
   ${renderBackupReminder()}
   <div class="statgrid">
-    <div class="stat amber"><div class="label">This Week's Revenue</div><div class="value">${fmtMoney(wkRev)}</div><div class="sub">Week ending ${fmtDate(wk)}</div></div>
+    <div class="stat amber"><div class="label">This Week's Net Profit</div><div class="value">${fmtMoney(wkNet)}</div><div class="sub">Week ending ${fmtDate(wk)} · Revenue ${fmtMoney(wkRev)} − driver pay − ${fmtMoney(wkExp)} expenses</div></div>
     <div class="stat"><div class="label">Total Revenue (All Time)</div><div class="value">${fmtMoney(nnlRev)}</div></div>
-    <div class="stat"><div class="label">Total Net Profit</div><div class="value">${fmtMoney(nnlNet)}</div><div class="sub">After driver pay</div></div>
+    <div class="stat"><div class="label">Total Net Profit</div><div class="value">${fmtMoney(nnlNet)}</div><div class="sub">After driver pay and truck expenses</div></div>
     <div class="stat"><div class="label">Outstanding (Not Paid)</div><div class="value">${fmtMoney(pendingTotal)}</div><div class="sub">${pendingNNL.length} loads pending</div></div>
   </div>
   <div class="card">
     <h2>Nalu Nui Logistics <span class="tag">${nnl.length} loads logged</span></h2>
-    <div class="statgrid" style="grid-template-columns:repeat(3,1fr); margin-bottom:0;">
+    <div class="statgrid" style="grid-template-columns:repeat(4,1fr); margin-bottom:0;">
       <div class="stat" style="background:var(--navy-800)"><div class="label">Revenue</div><div class="value">${fmtMoney(nnlRev)}</div></div>
       <div class="stat" style="background:var(--navy-800)"><div class="label">Driver Pay (30%)</div><div class="value">${fmtMoney(nnlPay)}</div></div>
+      <div class="stat" style="background:var(--navy-800)"><div class="label">Truck Expenses</div><div class="value">${fmtMoney(nnlExp)}</div></div>
       <div class="stat" style="background:var(--navy-800)"><div class="label">Net Profit</div><div class="value">${fmtMoney(nnlNet)}</div></div>
     </div>
   </div>
