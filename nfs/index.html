@@ -828,14 +828,16 @@ function loadToRow(l){
     payment_type:l.paymentType||null, ticket:l.ticket||null, qty:numOrNull(l.qty), rate:numOrNull(l.rate),
     revenue:numOrNull(l.revenue), driver_pay:numOrNull(l.driverPay), net:numOrNull(l.net), status:l.status||'Pending',
     invoice_num:l.invoiceNum||null, date_paid:l.datePaid||null, pit:l.pit||null, customer:l.customer||null,
-    job_name:l.jobName||null, material:l.material||null, broker:l.broker||null, notes:l.notes||null };
+    job_name:l.jobName||null, material:l.material||null, broker:l.broker||null, notes:l.notes||null,
+    invoiced_rate:numOrNull(l.invoicedRate), invoiced_tax:numOrNull(l.invoicedTaxAmount) };
 }
 function rowToLoad(r){
   return { id:r.id, company:r.company, date:r.date||'', party:r.party||'', truck:r.truck||'', driver:r.driver||'',
     driverType:r.driver_type||'', jobSource:r.job_source||'', referredBy:r.referred_by||'', paymentType:r.payment_type||'Per Ton',
     ticket:r.ticket||'', qty:r.qty??'', rate:r.rate??'', revenue:r.revenue||0, driverPay:r.driver_pay||0, net:r.net||0,
     status:r.status||'Pending', invoiceNum:r.invoice_num||'', datePaid:r.date_paid||'', pit:r.pit||'', customer:r.customer||'',
-    jobName:r.job_name||'', material:r.material||'', broker:r.broker||'', notes:r.notes||'' };
+    jobName:r.job_name||'', material:r.material||'', broker:r.broker||'', notes:r.notes||'',
+    invoicedRate:r.invoiced_rate??null, invoicedTaxAmount:r.invoiced_tax??null };
 }
 
 function expenseToRow(e){
@@ -3050,6 +3052,149 @@ function completedSummaryHtml(job){
     return `${s.material}: ${fmtQty(s.qty)} ${unitLabel(s.paymentType)} across ${s.loadsCount} load${s.loadsCount===1?'':'s'}${pctStr}`;
   }).join('<br>');
 }
+// ---- Client-facing NFS invoice: bills material + trucking + profit + tax,
+// not just the trucking leg — the actual document sent to clients, distinct
+// from the internal Weekly "Invoice by Client" reconciliation view (which
+// intentionally only tracks trucking revenue vs. driver pay/net).
+function findJobMaterialForLoad(l){
+  const job = state.salesJobs.find(j=>(j.jobName||'').trim().toLowerCase()===(l.jobName||'').trim().toLowerCase());
+  if(!job) return null;
+  computeDocTotals(job);
+  const m = (job.materials||[]).find(m=>(m.material||'').trim().toLowerCase()===(l.material||'').trim().toLowerCase());
+  if(!m) return null;
+  return { job, material: m };
+}
+// Tax is billed on the material cost portion only, same as quote/job math
+// (computeMaterialLine's taxAmount = materialCost * taxRate/100) — applied
+// here per actual delivered ton rather than the planned/quoted quantity.
+// Rate/tax for a load: once invoiced, uses the LOCKED-IN values captured at
+// billing time (l.invoicedRate/l.invoicedTaxAmount) rather than recomputing
+// from the job's current material pricing — otherwise editing a job's rate
+// later would silently change the total on an invoice already sent/paid.
+// Not-yet-invoiced loads (the "ready to invoice" preview) use live pricing
+// since nothing's been billed yet.
+function rateAndTaxForLoad(l){
+  if(l.invoicedRate!=null) return { rate: Number(l.invoicedRate)||0, tax: Number(l.invoicedTaxAmount)||0, matched:true };
+  const match = findJobMaterialForLoad(l);
+  if(!match) return { rate:0, tax:0, matched:false };
+  const qty = Number(l.qty)||0;
+  const m = match.material;
+  const materialCostPerUnit = m.materialMode==='flat' ? 0 : (Number(m.price)||0);
+  const tax = qty * materialCostPerUnit * ((Number(m.taxRate)||0)/100);
+  return { rate: m.pricePerUnit||0, tax, matched:true };
+}
+function computeNfsInvoiceTotals(loads){
+  let subtotal = 0, tax = 0, unmatched = 0;
+  loads.forEach(l=>{
+    const qty = Number(l.qty)||0;
+    const rt = rateAndTaxForLoad(l);
+    if(!rt.matched){ unmatched++; return; }
+    subtotal += qty * rt.rate;
+    tax += rt.tax;
+  });
+  return { subtotal: +subtotal.toFixed(2), tax: +tax.toFixed(2), total: +(subtotal+tax).toFixed(2), unmatched };
+}
+function uninvoicedLoadsForJob(job){
+  return completedLoadsForJob(job).filter(l=>!l.invoiceNum);
+}
+function buildNfsClientInvoiceHTML(job, loads){
+  const sorted = loads.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!sorted.length) return null;
+  let invNum = sorted[0].invoiceNum;
+  if(!invNum){
+    state.invoiceCounter = (state.invoiceCounter||1000) + 1;
+    invNum = 'NFS-'+state.invoiceCounter;
+    sorted.forEach(l=>{
+      l.invoiceNum = invNum;
+      if(l.status==='Pending') l.status='Invoiced';
+      const rt = rateAndTaxForLoad(l);
+      l.invoicedRate = rt.rate;
+      l.invoicedTaxAmount = +rt.tax.toFixed(2);
+    });
+    persist();
+  }
+  const totals = computeNfsInvoiceTotals(sorted);
+  const totalTons = sum(sorted,'qty');
+  const dateIssued = sorted[sorted.length-1].date;
+  const dueDate = addDays(dateIssued, 7);
+  const biz = BUSINESS_INFO.NFS;
+
+  const rows = sorted.map(l=>{
+    const rt = rateAndTaxForLoad(l);
+    const lineTotal = (Number(l.qty)||0) * rt.rate;
+    return `
+    <tr>
+      <td>${fmtDate(l.date)}</td>
+      <td class="num">${l.ticket||'—'}</td>
+      <td>${l.material||''}${rt.matched? '' : ' <span style="color:var(--bad-500);">⚠ no rate found</span>'}</td>
+      <td class="num">${fmtQty(l.qty)}</td>
+      <td class="num">${fmtMoney(rt.rate)}</td>
+      <td class="num">${fmtMoney(lineTotal)}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `
+    <div class="inv-head">
+      <div>
+        <div class="inv-brand">Nalu Nui Enterprise LLC</div>
+        <div class="inv-sub">DBA ${biz.name}<br>${biz.sub? biz.sub+'<br>' : ''}${biz.phone}</div>
+      </div>
+      <div>
+        <div class="inv-title">INVOICE</div>
+        <div class="inv-meta">
+          Invoice #: <strong>${invNum}</strong><br>
+          Invoice Date: <strong>${fmtDate(dateIssued)}</strong><br>
+          Due Date: <strong>${fmtDate(dueDate)}</strong>
+        </div>
+      </div>
+    </div>
+    <div class="inv-billto">
+      <div class="lbl">Bill To</div>
+      <div class="name">${job.client||''}</div>
+    </div>
+    <div style="font-size:12px;color:#5C7085;margin-bottom:14px;">Job Name: <strong>${job.jobName||''}</strong> &nbsp;|&nbsp; Total Loads: <strong>${sorted.length}</strong> &nbsp;|&nbsp; Total Tons: <strong>${fmtQty(totalTons)}</strong></div>
+    <table>
+      <thead><tr><th>Date</th><th>Ticket #</th><th>Material</th><th>Qty</th><th>Rate/Unit</th><th>Line Total</th></tr></thead>
+      <tbody>${rows}
+        <tr class="grouprow"><td colspan="3">TOTALS</td><td class="num">${fmtQty(totalTons)}</td><td></td><td class="num">${fmtMoney(totals.subtotal)}</td></tr>
+      </tbody>
+    </table>
+    <div class="inv-totals">
+      <table>
+        <tr><td>Subtotal</td><td class="num">${fmtMoney(totals.subtotal)}</td></tr>
+        <tr><td>Tax</td><td class="num">${fmtMoney(totals.tax)}</td></tr>
+        <tr class="grand"><td>Amount Due</td><td class="num">${fmtMoney(totals.total)}</td></tr>
+      </table>
+    </div>
+    ${totals.unmatched? `<div class="inv-terms" style="color:var(--bad-500);">⚠ ${totals.unmatched} load(s) above couldn't be matched to a material on this job (check the material name matches exactly) — they're billed at $0 above. Fix the material name and re-open this invoice to correct it.</div>` : ''}
+    <div class="inv-terms">Please make checks payable to <strong>Nalu Nui Enterprise LLC</strong>. Thank you for your business! Please include the invoice number on payment. Late payments may be subject to a 1.5% monthly finance charge.</div>`;
+  return { html, invNum, total: totals.total };
+}
+function openNfsClientInvoice(jobId, loads){
+  const job = state.salesJobs.find(j=>j.id===jobId);
+  if(!job) return;
+  const built = buildNfsClientInvoiceHTML(job, loads);
+  if(!built){ alert('No loads to invoice for this job.'); return; }
+  const modal = document.getElementById('invoice-modal');
+  modal.classList.add('wide');
+  modal.innerHTML = `
+    <div class="invoice-page">${built.html}</div>
+    <div class="modal-actions no-print">
+      <button class="btn btn-ghost" id="inv-close">Close</button>
+      <button class="btn btn-primary" id="inv-print">Print / Save as PDF</button>
+    </div>`;
+  document.getElementById('invoice-overlay').style.display = 'flex';
+  document.getElementById('inv-close').onclick = closeInvoice;
+  document.getElementById('inv-print').onclick = ()=>printWithTitle('Invoice '+built.invNum);
+}
+function reopenNfsInvoiceByNum(invoiceNum){
+  const loads = state.loads.filter(l=>l.invoiceNum===invoiceNum);
+  if(!loads.length) return;
+  const job = state.salesJobs.find(j=>(j.jobName||'').trim().toLowerCase()===(loads[0].jobName||'').trim().toLowerCase());
+  if(!job){ alert('Could not find the landed job this invoice was billed against.'); return; }
+  openNfsClientInvoice(job.id, loads);
+}
+
 function renderSalesJobsSection(){
   const editing = state.salesJobs.find(j=>j.id===editingSalesJobId);
   if(!salesJobFormDraft) salesJobFormDraft = mkEmptySalesJobFormDraft();
@@ -3158,11 +3303,14 @@ function renderWeeklyTab(){
     return Math.abs(diff) > 0.01;
   });
 
+  // Trucking revenue vs. driver pay/net reconciliation only — the actual
+  // client invoice (material + trucking + profit + tax) lives on the
+  // Invoices tab now, billed per landed job instead of per client/week.
   function groupTable(groupObj, revKey, payKey, netKey, nameLabel, company){
     const entries = Object.entries(groupObj);
     if(!entries.length) return `<div class="empty">No loads in this range yet.</div>`;
-    return `<div class="tablewrap"><table><thead><tr><th>${nameLabel}</th><th># Loads</th><th>Revenue</th><th>Driver Pay</th><th>Net</th><th></th></tr></thead><tbody>
-      ${entries.map(([name,items])=>`<tr><td><strong>${name}</strong></td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'revenue'))}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td><td class="num">${fmtMoney(sum(items,'net'))}</td><td><button class="btn btn-primary btn-sm" data-invoice="${company}|${encodeURIComponent(name)}|${start}|${end}">Print Invoice</button></td></tr>`).join('')}
+    return `<div class="tablewrap"><table><thead><tr><th>${nameLabel}</th><th># Loads</th><th>Revenue</th><th>Driver Pay</th><th>Net</th></tr></thead><tbody>
+      ${entries.map(([name,items])=>`<tr><td><strong>${name}</strong></td><td class="num">${items.length}</td><td class="num">${fmtMoney(sum(items,'revenue'))}</td><td class="num">${fmtMoney(sum(items,'driverPay'))}</td><td class="num">${fmtMoney(sum(items,'net'))}</td></tr>`).join('')}
     </tbody></table></div>`;
   }
   function driverTable(groupObj){
@@ -3199,7 +3347,8 @@ function renderWeeklyTab(){
     <button class="weekbtn" id="wk-next">Next ▶</button>
   </div>
 
-  <div class="sectiontitle">Nalu's Freight Solutions — Invoice by Client</div>
+  <div class="sectiontitle">Nalu's Freight Solutions — Trucking Revenue by Client (internal check)</div>
+  <div class="note">This is trucking revenue only, used to balance against driver pay/net — it's not the client invoice. For the actual bill (material + trucking + profit + tax), go to the Invoices tab.</div>
   <div class="card">${groupTable(nfsByClient,'revenue','driverPay','net','Client','NFS')}</div>
 
   <div class="sectiontitle" style="display:flex; justify-content:space-between; align-items:center;">
@@ -3895,54 +4044,57 @@ function openQuoteListPrint(rows, title, subtitle){
 
 /* ============================= INVOICES TAB ============================= */
 function renderInvoicesTab(){
-  const uniqueParties = [...new Set(loadsFor('NFS').map(l=>l.party).filter(Boolean))];
   const invoices = getAllInvoices();
-  const wk = currentWeekEnding;
+  const readyJobs = state.salesJobs.map(j=>{
+    const loads = uninvoicedLoadsForJob(j);
+    if(!loads.length) return null;
+    const totals = computeNfsInvoiceTotals(loads);
+    return { job: j, loads, totals };
+  }).filter(Boolean);
 
   return `
   <div class="pagehead">
     <h1>Invoices</h1>
-    <p>Create, print, copy, or bulk-download invoices for any week.</p>
+    <p>Bill clients for material + trucking + profit + tax — one invoice per landed job, covering whatever loads haven't been invoiced yet on that job.</p>
   </div>
 
   <div class="card">
-    <h2>Create / Preview an Invoice</h2>
-    <div class="formgrid">
-      <div class="field"><label>Client</label><input type="text" id="iv-party" list="iv-party-list" placeholder="Type or pick a name"></div>
-      <datalist id="iv-party-list">${uniqueParties.map(p=>`<option value="${p}">`).join('')}</datalist>
-      <div class="field"><label>From</label><input type="date" id="iv-start" value="${addDays(wk,-6)}"></div>
-      <div class="field"><label>To</label><input type="date" id="iv-end" value="${wk}"></div>
-      <div class="field"><button class="btn btn-primary" id="iv-generate">Preview &amp; Print</button></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="flexbar">
-      <h2 style="margin:0;">This Week — ${fmtDate(wk)}</h2>
-      <button class="btn btn-primary" id="iv-printall">🖨 Print / Download All Invoices This Week</button>
-    </div>
-    <div class="note">Bundles every client invoiced this week into one print job — use "Save as PDF" in the print dialog to download them all as a single file.</div>
+    <h2>Landed Jobs Ready to Invoice <span class="tag">${readyJobs.length}</span></h2>
+    ${readyJobs.length? `
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Client</th><th>Job Name</th><th>New Loads</th><th>Estimated Total</th><th></th></tr></thead>
+      <tbody>
+        ${readyJobs.map(({job,loads,totals})=>`
+        <tr>
+          <td><strong>${job.client||''}</strong></td>
+          <td>${job.jobName||''}</td>
+          <td class="num">${loads.length}</td>
+          <td class="num">${fmtMoney(totals.total)}</td>
+          <td><button class="btn btn-primary btn-sm" data-invoice-job="${job.id}">Preview &amp; Print Invoice</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>` : `<div class="empty">No new completed loads waiting to be invoiced.</div>`}
   </div>
 
   <div class="card">
     <h2>All Invoices <span class="tag">${invoices.length} generated</span></h2>
     <div class="tablewrap">
     <table>
-      <thead><tr><th>Invoice #</th><th>Company</th><th>Client</th><th>Week</th><th>Total</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Invoice #</th><th>Client</th><th>Week</th><th>Total</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${invoices.length? invoices.map(inv=>`
           <tr>
             <td class="mono">${inv.invoiceNum}</td>
-            <td>${inv.company}</td>
             <td><strong>${inv.party}</strong></td>
             <td>${fmtDate(inv.week)}</td>
             <td class="num">${fmtMoney(inv.total)}</td>
             <td><span class="pill ${inv.status==='Paid'?'paid':inv.status==='Partially Paid'?'invoiced':'pending'}">${inv.status}</span></td>
             <td>
               <button class="btn btn-ghost btn-sm" data-view-inv="${inv.invoiceNum}">View / Print</button>
-              <button class="btn btn-ghost btn-sm" data-copy-inv="${inv.invoiceNum}">Copy Text</button>
             </td>
-          </tr>`).join('') : `<tr><td colspan="7"><div class="empty">No invoices generated yet — create one above or print from the Weekly tab.</div></td></tr>`}
+          </tr>`).join('') : `<tr><td colspan="6"><div class="empty">No invoices generated yet — create one above once a landed job has completed loads.</div></td></tr>`}
       </tbody>
     </table>
     </div>
@@ -3950,53 +4102,10 @@ function renderInvoicesTab(){
   `;
 }
 
-// NFS's own versions — these were never moved to /shared/invoice-print.js (that
-// file only holds buildInvoiceHTML/openInvoice/printAllForWeek/printDriverPayroll;
-// the plain-text copy/paste invoice helper and the invoice-list lookup stayed
-// per-app in both NNL and NFS, same as legacy's original combined app).
-function invoiceTextFor(company, party, opts){
-  const items = invoiceItemsFor(company, party, opts).slice().sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  if(!items.length) return null;
-  const biz = BUSINESS_INFO[company];
-  const rangeStart = opts.startDate || items[0].date;
-  const rangeEnd = opts.endDate || items[items.length-1].date;
-  const dueDate = addDays(rangeEnd,7);
-  const invNum = items[0].invoiceNum || '(not yet generated — click Print first)';
-  const jobGroups = {};
-  items.forEach(l=>{
-    const jn = l.jobName || '—';
-    (jobGroups[jn] = jobGroups[jn] || []).push(l);
-  });
-  const lines = Object.entries(jobGroups).flatMap(([jobName, group])=>{
-    const ticketLines = group.map(l=>{
-      const customer = (l.party||'') || '—';
-      return `${fmtDate(l.date)}  |  Ticket ${l.ticket||'—'}  |  ${customer} · ${jobName}  |  ${fmtQty(l.qty)} ${unitLabel(l.paymentType)} @ ${fmtMoney(l.rate)}  =  ${fmtMoney(l.revenue)}`;
-    });
-    const qty = sum(group,'qty');
-    const revenue = sum(group,'revenue');
-    const unit = unitLabel(group[0].paymentType);
-    return [...ticketLines, `Total for ${jobName}: ${fmtQty(qty)} ${unit}  =  ${fmtMoney(revenue)}`, ''];
-  });
-  const total = sum(items,'revenue');
-  return [
-    `${biz.name}`, ...(biz.sub? [biz.sub] : []), `${biz.phone}`, '',
-    `INVOICE #${invNum}`, `Date Issued: ${fmtDate(rangeEnd)}`, `Payment Due: ${fmtDate(dueDate)}`, '',
-    `Bill To: ${party}`, `${fmtDate(rangeStart)} – ${fmtDate(rangeEnd)}`, '',
-    ...lines,
-    `TOTAL DUE: ${fmtMoney(total)}`
-  ].join('\n');
-}
-function copyInvoiceText(company, party, opts){
-  if(!opts) opts = weekRange(currentWeekEnding);
-  else if(typeof opts === 'string') opts = weekRange(opts);
-  const text = invoiceTextFor(company, party, opts);
-  if(!text){ alert('No loads found for '+party+' in that range.'); return; }
-  navigator.clipboard.writeText(text).then(()=>{
-    alert('Invoice copied — paste it into your email.');
-  }).catch(()=>{
-    alert('Could not copy automatically. Here is the invoice text:\n\n'+text);
-  });
-}
+// invoiceItemsFor/buildInvoiceHTML (shared) are still used by the Weekly tab's
+// internal trucking-revenue-vs-payroll reconciliation check — but the actual
+// client invoice (buildNfsClientInvoiceHTML above) bills material + trucking +
+// profit + tax, so there's no NFS "copy trucking-only invoice text" anymore.
 
 function getAllInvoices(){
   const map = {};
@@ -4009,7 +4118,9 @@ function getAllInvoices(){
     const week = weekEndingFriday(inv.items[0].date);
     const statuses = inv.items.map(i=>i.status);
     const status = statuses.every(s=>s==='Paid') ? 'Paid' : statuses.some(s=>s==='Paid') ? 'Partially Paid' : 'Invoiced';
-    return { ...inv, week, total: sum(inv.items,'revenue'), status };
+    // Real client-billed total (material + trucking + profit + tax), not raw
+    // trucking revenue — matches what buildNfsClientInvoiceHTML actually bills.
+    return { ...inv, week, total: computeNfsInvoiceTotals(inv.items).total, status };
   }).sort((a,b)=> b.week.localeCompare(a.week));
 }
 
@@ -4733,12 +4844,6 @@ function attachHandlers(){
     refreshPitMapCalc();
   };
 
-  // Invoice buttons
-  document.querySelectorAll('[data-invoice]').forEach(b=>b.onclick=()=>{
-    const [company, partyEnc, startDate, endDate] = b.dataset.invoice.split('|');
-    openInvoice(company, decodeURIComponent(partyEnc), {startDate, endDate});
-  });
-
   // NFS client balance payments
   document.querySelectorAll('[data-add-payment]').forEach(b=>b.onclick=()=>{
     const jobId = b.dataset.addPayment;
@@ -4808,27 +4913,14 @@ function attachHandlers(){
   if(connectFolderBtn) connectFolderBtn.onclick = connectExportFolder;
 
   // Invoices tab
-  const ivGenerate = document.getElementById('iv-generate');
-  if(ivGenerate) ivGenerate.onclick = ()=>{
-    const party = document.getElementById('iv-party').value.trim();
-    const startDate = document.getElementById('iv-start').value;
-    const endDate = document.getElementById('iv-end').value;
-    if(!party){ alert('Type a client name first.'); return; }
-    if(!startDate || !endDate){ alert('Pick a From and To date first.'); return; }
-    if(startDate > endDate){ alert('The From date must be on or before the To date.'); return; }
-    openInvoice('NFS', party, {startDate, endDate});
-  };
-  const ivPrintAll = document.getElementById('iv-printall');
-  if(ivPrintAll) ivPrintAll.onclick = ()=> printAllForWeek(currentWeekEnding);
-  document.querySelectorAll('[data-view-inv]').forEach(b=>b.onclick=()=>{
-    const invoiceNum = b.dataset.viewInv;
-    const inv = getAllInvoices().find(i=>i.invoiceNum===invoiceNum);
-    if(inv) openInvoice(inv.company, inv.party, {invoiceNum});
+  document.querySelectorAll('[data-invoice-job]').forEach(b=>b.onclick=()=>{
+    const jobId = b.dataset.invoiceJob;
+    const job = state.salesJobs.find(j=>j.id===jobId);
+    if(!job) return;
+    openNfsClientInvoice(jobId, uninvoicedLoadsForJob(job));
   });
-  document.querySelectorAll('[data-copy-inv]').forEach(b=>b.onclick=()=>{
-    const invoiceNum = b.dataset.copyInv;
-    const inv = getAllInvoices().find(i=>i.invoiceNum===invoiceNum);
-    if(inv) copyInvoiceText(inv.company, inv.party, {invoiceNum});
+  document.querySelectorAll('[data-view-inv]').forEach(b=>b.onclick=()=>{
+    reopenNfsInvoiceByNum(b.dataset.viewInv);
   });
 }
 
