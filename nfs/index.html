@@ -1362,16 +1362,17 @@ function renderNfsBalancesBanner(){
 /* ============================= DASHBOARD ============================= */
 function renderDashboard(){
   const nfs = loadsFor('NFS');
-  const nfsRev = sum(nfs,'revenue');
   const nfsPay = sum(nfs,'driverPay');
-  const nfsNet = sum(nfs,'net');
-  state.salesJobs.forEach(computeDocTotals);
-  const nneRev = sum(state.salesJobs,'totalBilled'), nneProfit = sum(state.salesJobs,'totalProfit');
+  state.salesJobs.forEach(computeJobBilledToDate);
+  const billedToDate = sum(state.salesJobs,'billedToDate');
+  const profitToDate = sum(state.salesJobs,'profitToDate');
   const nfsBalances = getNfsClientBalances();
   const pendingTotal = sum(nfsBalances,'balanceDue');
   const wk = currentWeekEnding;
-  const wkLoads = state.loads.filter(l=>weekEndingFriday(l.date)===wk);
-  const wkRev = sum(wkLoads,'revenue');
+  const wkLoads = state.loads.filter(l=>l.company==='NFS' && weekEndingFriday(l.date)===wk);
+  // Same locked-rate-aware pricing as the real invoice/dashboard totals — not
+  // trucking-only revenue, so "this week" reflects what's actually billable.
+  const wkRev = wkLoads.reduce((a,l)=>{ const rt=rateAndTaxForLoad(l); return a + (rt.matched? (Number(l.qty)||0)*rt.rate + rt.tax : 0); }, 0);
 
   return `
   <div class="pagehead">
@@ -1395,16 +1396,17 @@ function renderDashboard(){
   ${renderBackupReminder()}
   <div class="statgrid">
     <div class="stat amber"><div class="label">This Week's Revenue</div><div class="value">${fmtMoney(wkRev)}</div><div class="sub">Week ending ${fmtDate(wk)}</div></div>
-    <div class="stat"><div class="label">Total Revenue (All Time)</div><div class="value">${fmtMoney(nfsRev+nneRev)}</div></div>
-    <div class="stat"><div class="label">Total Net Profit</div><div class="value">${fmtMoney(nfsNet+nneProfit)}</div><div class="sub">After driver pay + sales job costs</div></div>
+    <div class="stat"><div class="label">Total Revenue (Billed to Date)</div><div class="value">${fmtMoney(billedToDate)}</div><div class="sub">Material + trucking + profit, only for tons actually delivered</div></div>
+    <div class="stat"><div class="label">Total Profit (Billed to Date)</div><div class="value">${fmtMoney(profitToDate)}</div></div>
     <div class="stat"><div class="label">Outstanding (Not Paid)</div><div class="value">${fmtMoney(pendingTotal)}</div><div class="sub">${nfsBalances.length} NFS jobs pending</div></div>
   </div>
   <div class="card">
     <h2>Nalu's Freight Solutions <span class="tag">${nfs.length} loads logged</span></h2>
+    <div class="note">"Billed to Date" and "Profit to Date" only count tons that have actually been trucked — a job with materials priced but no completed loads yet (like a job you just landed) contributes $0 until loads start coming in. Driver Pay below is trucking-only, separate from material billing.</div>
     <div class="statgrid" style="grid-template-columns:repeat(3,1fr); margin-bottom:0;">
-      <div class="stat" style="background:var(--navy-800)"><div class="label">Revenue</div><div class="value">${fmtMoney(nfsRev)}</div></div>
+      <div class="stat" style="background:var(--navy-800)"><div class="label">Billed to Date</div><div class="value">${fmtMoney(billedToDate)}</div></div>
       <div class="stat" style="background:var(--navy-800)"><div class="label">Driver Pay</div><div class="value">${fmtMoney(nfsPay)}</div></div>
-      <div class="stat" style="background:var(--navy-800)"><div class="label">Net Profit</div><div class="value">${fmtMoney(nfsNet)}</div></div>
+      <div class="stat" style="background:var(--navy-800)"><div class="label">Profit to Date</div><div class="value">${fmtMoney(profitToDate)}</div></div>
     </div>
   </div>
   <div class="note">Tip: use the <strong>Weekly Invoice &amp; Payroll</strong> tab every Friday — it auto-groups this week's loads by client and driver so you know exactly what to invoice and what to pay, no retyping names.</div>
@@ -2734,13 +2736,24 @@ function computeDocTotals(doc){
 function computeJobBilledToDate(job){
   computeDocTotals(job);
   const loads = completedLoadsForJob(job);
-  let billed = 0;
+  let billed = 0, profit = 0;
   loads.forEach(l=>{
     const rt = rateAndTaxForLoad(l);
     if(!rt.matched) return;
-    billed += (Number(l.qty)||0) * rt.rate + rt.tax;
+    const qty = Number(l.qty)||0;
+    billed += qty * rt.rate + rt.tax;
+    // Profit-to-date doesn't need invoice-locking like the client rate does —
+    // it's an internal figure, not something billed to the client — so it's
+    // fine for it to reflect the job's current cost/profit assumptions.
+    const match = findJobMaterialForLoad(l);
+    if(match){
+      const m = match.material;
+      const plannedQty = (m.qtyFinal!=null && m.qtyFinal!=='') ? Number(m.qtyFinal) : Number(m.qtyRequested)||0;
+      if(plannedQty) profit += qty * (m.profit/plannedQty);
+    }
   });
   job.billedToDate = +billed.toFixed(2);
+  job.profitToDate = +profit.toFixed(2);
   job.amountPaid = Number(job.amountPaid)||0;
   job.balanceDue = +(job.billedToDate - job.amountPaid).toFixed(2);
   return job;
