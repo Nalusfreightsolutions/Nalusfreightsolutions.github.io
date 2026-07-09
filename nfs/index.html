@@ -3569,13 +3569,29 @@ function computeQuarterly(company, year){
   return [1,2,3,4].map(q=>{
     const qLoads = loads.filter(l=>quarterOf(l.date)===q);
     const qExp = expenses.filter(e=>quarterOf(e.date)===q);
-    // Real client-billed revenue (material + trucking + profit + tax) per load
-    // actually delivered that quarter — not trucking-only pass-through revenue.
-    // Only counts loads that actually happened (have a date in this quarter),
-    // never a job's full quoted/projected total.
-    const revenue = qLoads.reduce((a,l)=>{ const rt=rateAndTaxForLoad(l); return a + (rt.matched? (Number(l.qty)||0)*rt.rate + rt.tax : 0); }, 0);
+    // Real client-billed revenue (material + trucking + profit) per load
+    // actually delivered that quarter — not trucking-only pass-through revenue,
+    // and not a job's full quoted/projected total. Tax is tracked separately
+    // since it's pass-through (collected for the state), not company income.
+    // Material cost is what's actually owed to the pit — Net subtracts it
+    // alongside driver pay and operating expenses so it reflects true profit,
+    // not just revenue minus payroll.
+    let revenue = 0, materialCost = 0, tax = 0;
+    qLoads.forEach(l=>{
+      const rt = rateAndTaxForLoad(l);
+      if(!rt.matched) return;
+      const qty = Number(l.qty)||0;
+      revenue += qty * rt.rate;
+      tax += rt.tax;
+      const match = findJobMaterialForLoad(l);
+      if(match){
+        const m = match.material;
+        const plannedQty = (m.qtyFinal!=null && m.qtyFinal!=='') ? Number(m.qtyFinal) : Number(m.qtyRequested)||0;
+        if(plannedQty) materialCost += qty * (m.materialCost/plannedQty);
+      }
+    });
     const driverPay = sum(qLoads,'driverPay'), opex = sum(qExp,'amount');
-    return { q, revenue, driverPay, opex, net: revenue-driverPay-opex, loadCount:qLoads.length };
+    return { q, revenue, materialCost, tax, driverPay, opex, net: revenue-materialCost-driverPay-opex, loadCount:qLoads.length };
   });
 }
 
@@ -3624,6 +3640,7 @@ function drawReportsCharts(company){
         labels: quarters.map(q=>'Q'+q.q),
         datasets:[
           { label:'Revenue', data:quarters.map(q=>q.revenue), backgroundColor:'#1F3A5F' },
+          { label:'Material Cost', data:quarters.map(q=>q.materialCost), backgroundColor:'#C9A961' },
           { label:'Driver Pay', data:quarters.map(q=>q.driverPay), backgroundColor:'#9FB0C3' },
           { label:'Operating Exp.', data:quarters.map(q=>q.opex), backgroundColor:'#D8483D' },
           { label:'Net', data:quarters.map(q=>q.net), backgroundColor:'#E8871E' },
@@ -3635,7 +3652,7 @@ function drawReportsCharts(company){
     const years = getAvailableYears();
     const annualByYear = years.map(y=>{
       const qs = computeQuarterly(company, y);
-      return { year:y, revenue:sum(qs,'revenue'), driverPay:sum(qs,'driverPay'), opex:sum(qs,'opex'), net:sum(qs,'net') };
+      return { year:y, revenue:sum(qs,'revenue'), materialCost:sum(qs,'materialCost'), driverPay:sum(qs,'driverPay'), opex:sum(qs,'opex'), net:sum(qs,'net') };
     });
     drawChart('chart-annual-'+company, {
       type:'bar',
@@ -3643,6 +3660,7 @@ function drawReportsCharts(company){
         labels: annualByYear.map(a=>a.year),
         datasets:[
           { label:'Revenue', data:annualByYear.map(a=>a.revenue), backgroundColor:'#1F3A5F' },
+          { label:'Material Cost', data:annualByYear.map(a=>a.materialCost), backgroundColor:'#C9A961' },
           { label:'Driver Pay', data:annualByYear.map(a=>a.driverPay), backgroundColor:'#9FB0C3' },
           { label:'Operating Exp.', data:annualByYear.map(a=>a.opex), backgroundColor:'#D8483D' },
           { label:'Net', data:annualByYear.map(a=>a.net), backgroundColor:'#E8871E' },
@@ -3691,7 +3709,7 @@ function renderCompanyReportsTab(company){
   const { year, view } = filterState;
   const years = getAvailableYears();
   const quarters = computeQuarterly(company, year);
-  const yearTotal = { revenue:sum(quarters,'revenue'), driverPay:sum(quarters,'driverPay'), opex:sum(quarters,'opex'), net:sum(quarters,'net') };
+  const yearTotal = { revenue:sum(quarters,'revenue'), materialCost:sum(quarters,'materialCost'), tax:sum(quarters,'tax'), driverPay:sum(quarters,'driverPay'), opex:sum(quarters,'opex'), net:sum(quarters,'net') };
   const { map: catMap, undated } = computeCategoryBreakdown(company, year);
   const catEntries = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
   const catTotal = catEntries.reduce((a,[,v])=>a+v,0);
@@ -3700,7 +3718,7 @@ function renderCompanyReportsTab(company){
   // multi-year comparison for the Annual view
   const annualByYear = years.map(y=>{
     const qs = computeQuarterly(company, y);
-    return { year:y, revenue:sum(qs,'revenue'), driverPay:sum(qs,'driverPay'), opex:sum(qs,'opex'), net:sum(qs,'net') };
+    return { year:y, revenue:sum(qs,'revenue'), materialCost:sum(qs,'materialCost'), tax:sum(qs,'tax'), driverPay:sum(qs,'driverPay'), opex:sum(qs,'opex'), net:sum(qs,'net') };
   });
 
   return `
@@ -3724,10 +3742,11 @@ function renderCompanyReportsTab(company){
   </div>
 
   <div class="statgrid">
-    <div class="stat"><div class="label">Revenue (${year})</div><div class="value">${fmtMoney(yearTotal.revenue)}</div></div>
+    <div class="stat"><div class="label">Revenue (${year})</div><div class="value">${fmtMoney(yearTotal.revenue)}</div><div class="sub">Excludes sales tax (pass-through)</div></div>
+    <div class="stat"><div class="label">Material Cost</div><div class="value">${fmtMoney(yearTotal.materialCost)}</div></div>
     <div class="stat"><div class="label">Driver Pay</div><div class="value">${fmtMoney(yearTotal.driverPay)}</div></div>
     <div class="stat"><div class="label">Operating Expenses</div><div class="value">${fmtMoney(yearTotal.opex)}</div></div>
-    <div class="stat amber"><div class="label">Net Profit</div><div class="value">${fmtMoney(yearTotal.net)}</div></div>
+    <div class="stat amber"><div class="label">Net Profit</div><div class="value">${fmtMoney(yearTotal.net)}</div><div class="sub">Revenue − material − driver pay − opex</div></div>
   </div>
 
   ${renderNfsSalesReportCard(year)}
@@ -3740,13 +3759,14 @@ function renderCompanyReportsTab(company){
     <div style="height:280px;"><canvas id="chart-quarterly-${company}"></canvas></div>
     <div class="tablewrap" style="margin-top:16px;">
     <table>
-      <thead><tr><th>Quarter</th><th># Loads</th><th>Revenue</th><th>Driver Pay</th><th>Operating Exp.</th><th>Net</th></tr></thead>
+      <thead><tr><th>Quarter</th><th># Loads</th><th>Revenue</th><th>Material Cost</th><th>Sales Tax</th><th>Driver Pay</th><th>Operating Exp.</th><th>Net</th></tr></thead>
       <tbody>
-        ${quarters.map(q=>`<tr><td><strong>Q${q.q}</strong></td><td class="num">${q.loadCount}</td><td class="num">${fmtMoney(q.revenue)}</td><td class="num">${fmtMoney(q.driverPay)}</td><td class="num">${fmtMoney(q.opex)}</td><td class="num" style="color:${q.net>=0?'var(--good-500)':'var(--bad-500)'};font-weight:700;">${fmtMoney(q.net)}</td></tr>`).join('')}
-        <tr class="grouprow"><td>YEAR TOTAL</td><td>${sum(quarters,'loadCount')}</td><td class="num">${fmtMoney(yearTotal.revenue)}</td><td class="num">${fmtMoney(yearTotal.driverPay)}</td><td class="num">${fmtMoney(yearTotal.opex)}</td><td class="num">${fmtMoney(yearTotal.net)}</td></tr>
+        ${quarters.map(q=>`<tr><td><strong>Q${q.q}</strong></td><td class="num">${q.loadCount}</td><td class="num">${fmtMoney(q.revenue)}</td><td class="num">${fmtMoney(q.materialCost)}</td><td class="num">${fmtMoney(q.tax)}</td><td class="num">${fmtMoney(q.driverPay)}</td><td class="num">${fmtMoney(q.opex)}</td><td class="num" style="color:${q.net>=0?'var(--good-500)':'var(--bad-500)'};font-weight:700;">${fmtMoney(q.net)}</td></tr>`).join('')}
+        <tr class="grouprow"><td>YEAR TOTAL</td><td>${sum(quarters,'loadCount')}</td><td class="num">${fmtMoney(yearTotal.revenue)}</td><td class="num">${fmtMoney(yearTotal.materialCost)}</td><td class="num">${fmtMoney(yearTotal.tax)}</td><td class="num">${fmtMoney(yearTotal.driverPay)}</td><td class="num">${fmtMoney(yearTotal.opex)}</td><td class="num">${fmtMoney(yearTotal.net)}</td></tr>
       </tbody>
     </table>
     </div>
+    <div class="note" style="margin-top:10px;">Sales tax is collected on behalf of the state, not company income — kept out of Revenue and Net. Net = Revenue − Material Cost − Driver Pay − Operating Expenses.</div>
   </div>
 
   <div class="card">
@@ -3762,9 +3782,9 @@ function renderCompanyReportsTab(company){
     <div style="height:280px;"><canvas id="chart-annual-${company}"></canvas></div>
     <div class="tablewrap" style="margin-top:16px;">
     <table>
-      <thead><tr><th>Year</th><th>Revenue</th><th>Driver Pay</th><th>Operating Exp.</th><th>Net</th></tr></thead>
+      <thead><tr><th>Year</th><th>Revenue</th><th>Material Cost</th><th>Sales Tax</th><th>Driver Pay</th><th>Operating Exp.</th><th>Net</th></tr></thead>
       <tbody>
-        ${annualByYear.map(a=>`<tr><td><strong>${a.year}</strong></td><td class="num">${fmtMoney(a.revenue)}</td><td class="num">${fmtMoney(a.driverPay)}</td><td class="num">${fmtMoney(a.opex)}</td><td class="num" style="color:${a.net>=0?'var(--good-500)':'var(--bad-500)'};font-weight:700;">${fmtMoney(a.net)}</td></tr>`).join('')}
+        ${annualByYear.map(a=>`<tr><td><strong>${a.year}</strong></td><td class="num">${fmtMoney(a.revenue)}</td><td class="num">${fmtMoney(a.materialCost)}</td><td class="num">${fmtMoney(a.tax)}</td><td class="num">${fmtMoney(a.driverPay)}</td><td class="num">${fmtMoney(a.opex)}</td><td class="num" style="color:${a.net>=0?'var(--good-500)':'var(--bad-500)'};font-weight:700;">${fmtMoney(a.net)}</td></tr>`).join('')}
       </tbody>
     </table>
     </div>
