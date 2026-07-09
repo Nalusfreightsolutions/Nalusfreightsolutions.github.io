@@ -1,0 +1,191 @@
+:root{
+  --navy-950:#0B1B2B;
+  --navy-900:#122438;
+  --navy-800:#1B3450;
+  --navy-700:#254566;
+  --steel-100:#EEF2F6;
+  --steel-200:#DCE4EC;
+  --steel-400:#9FB0C3;
+  --amber-500:#E8871E;
+  --amber-600:#CC6E0C;
+  --good-500:#2E9E5B;
+  --bad-500:#D8483D;
+  --white:#FFFFFF;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  font-family:'Inter',system-ui,sans-serif;
+  background:var(--steel-100);
+  color:var(--navy-950);
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,.display{
+  font-family:'Oswald',system-ui,sans-serif;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+}
+.mono{font-family:'JetBrains Mono',monospace;}
+
+/* ---- Shell ---- */
+#shell{display:flex; min-height:100vh;}
+#sidebar{
+  width:230px; flex-shrink:0; background:var(--navy-950);
+  color:var(--steel-200); padding:20px 0; position:sticky; top:0; height:100vh;
+}
+#brand{padding:0 20px 20px; border-bottom:1px solid var(--navy-700);}
+#brand .mark{font-family:'Oswald'; font-weight:700; font-size:20px; color:var(--white); letter-spacing:.03em;}
+#brand .sub{font-size:11px; color:var(--steel-400); margin-top:4px; text-transform:uppercase; letter-spacing:.08em;}
+nav{padding:14px 10px;}
+.navbtn{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  background:none; border:none; color:var(--steel-200); font-family:'Inter';
+  font-size:13.5px; font-weight:600; padding:11px 12px; border-radius:6px; cursor:pointer;
+  margin-bottom:2px; transition:background .12s;
+}
+.navbtn:hover{background:var(--navy-800);}
+.navbtn.active{background:var(--amber-500); color:var(--navy-950);}
+.navbtn .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.55;flex-shrink:0;}
+#savebadge{
+  margin:16px 10px 0; padding:9px 12px; border-radius:6px; background:var(--navy-800);
+  font-size:11px; color:var(--steel-400); display:flex; align-items:center; gap:7px;
+}
+#savebadge .pulse{width:7px;height:7px;border-radius:50%;background:var(--good-500);}
+
+#main{flex:1; padding:28px 34px 60px; max-width:1180px;}
+.pagehead{margin-bottom:22px;}
+.pagehead h1{font-size:26px; margin:0 0 4px; color:var(--navy-950);}
+.pagehead p{margin:0; color:#5C7085; font-size:14px; font-family:'Inter';}
+
+.card{
+  background:var(--white); border:1px solid var(--steel-200); border-radius:10px;
+  padding:20px 22px; margin-bottom:18px;
+}
+.card h2{font-size:15px; margin:0 0 14px; color:var(--navy-800); display:flex; align-items:center; justify-content:space-between;}
+.card h2 .tag{font-family:'JetBrains Mono'; font-size:10px; background:var(--steel-100); color:#5C7085; padding:3px 8px; border-radius:4px; text-transform:none; letter-spacing:0; font-weight:500;}
+
+/* ---- Stat grid ---- */
+.statgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin-bottom:18px;}
+.stat{background:var(--navy-950); color:var(--white); border-radius:10px; padding:18px 20px; position:relative; overflow:hidden;}
+.stat.amber{background:linear-gradient(135deg,var(--amber-600),var(--amber-500));}
+.stat .label{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--steel-400); font-weight:600;}
+.stat.amber .label{color:rgba(11,27,43,.65);}
+.stat .value{font-family:'Oswald'; font-size:26px; margin-top:6px; font-weight:600;}
+.stat.amber .value{color:var(--navy-950);}
+.stat .sub{font-size:11px; color:var(--steel-400); margin-top:4px;}
+.stat.amber .sub{color:rgba(11,27,43,.6);}
+
+/* ---- Forms ---- */
+.formgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; align-items:end;}
+.loadform-fixed{grid-template-columns:repeat(6,minmax(0,1fr));}
+@media(max-width:1100px){ .loadform-fixed{grid-template-columns:repeat(3,minmax(0,1fr));} }
+@media(max-width:700px){ .loadform-fixed{grid-template-columns:repeat(2,minmax(0,1fr));} }
+.field{display:flex; flex-direction:column; gap:5px;}
+.field label{font-size:11px; font-weight:600; color:#5C7085; text-transform:uppercase; letter-spacing:.04em;}
+.field input, .field select{
+  padding:9px 10px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:13.5px;
+  font-family:'Inter'; background:var(--white); color:var(--navy-950);
+}
+.field input:focus, .field select:focus{outline:none; border-color:var(--amber-500);}
+.btn{
+  padding:10px 18px; border-radius:6px; border:none; font-weight:700; font-size:13px;
+  cursor:pointer; font-family:'Inter'; letter-spacing:.02em; transition:opacity .12s;
+}
+.btn:hover{opacity:.88;}
+.btn-primary{background:var(--amber-500); color:var(--navy-950);}
+.btn-ghost{background:var(--steel-100); color:var(--navy-800);}
+.btn-danger{background:#FDECEA; color:var(--bad-500);}
+.btn-sm{padding:5px 10px; font-size:11.5px; border-radius:5px;}
+
+/* ---- Table ---- */
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{
+  text-align:left; padding:9px 10px; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+  color:#5C7085; border-bottom:2px solid var(--steel-200); white-space:nowrap; font-weight:700;
+}
+td{padding:9px 10px; border-bottom:1px solid var(--steel-100); white-space:nowrap;}
+tr:hover td{background:var(--steel-100);}
+.num{font-family:'JetBrains Mono'; font-size:12.5px;}
+.tablewrap{overflow-x:auto;}
+/* Keeps Edit/Delete reachable without scrolling all the way across very wide
+   tables (e.g. NNL/NFS Loads, which can run 20+ columns). */
+.sticky-actions{position:sticky; right:0; background:#fff; box-shadow:-2px 0 4px rgba(0,0,0,0.06);}
+.pill{padding:3px 9px; border-radius:20px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;}
+.pill.paid{background:#E2F5EA; color:var(--good-500);}
+.pill.pending{background:#FDF1E2; color:var(--amber-600);}
+.pill.invoiced{background:#E8EFFB; color:#2C5FA8;}
+.empty{padding:28px; text-align:center; color:#9FB0C3; font-size:13px;}
+
+.check-ok{color:var(--good-500); font-weight:700;}
+.check-bad{color:var(--bad-500); font-weight:700;}
+.balancebar{
+  display:flex; align-items:center; justify-content:space-between; padding:16px 20px;
+  border-radius:10px; margin-top:6px; font-family:'Oswald'; font-size:15px; font-weight:600;
+}
+.balancebar.ok{background:#E2F5EA; color:var(--good-500);}
+.balancebar.bad{background:#FDECEA; color:var(--bad-500);}
+.balancebar.warn{background:#FDF1E2; color:var(--amber-600);}
+
+.grouprow{background:var(--steel-100); font-weight:700;}
+.sectiontitle{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#5C7085; margin:20px 0 10px;}
+.flexbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+
+.companytabs{display:flex; gap:8px; margin-bottom:18px;}
+.companytabs button{
+  padding:8px 16px; border-radius:20px; border:1.5px solid var(--steel-200); background:var(--white);
+  font-weight:700; font-size:12.5px; cursor:pointer; color:#5C7085;
+}
+.companytabs button.active{background:var(--navy-950); border-color:var(--navy-950); color:var(--white);}
+
+.weekpick{display:flex; align-items:center; gap:12px; margin-bottom:20px;}
+.weekpick input[type=date]{padding:9px 12px; border:1.5px solid var(--amber-500); border-radius:6px; font-size:14px; font-weight:700; font-family:'JetBrains Mono'; background:#FFF7EE;}
+.weekbtn{background:none; border:1.5px solid var(--steel-200); border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700; color:var(--navy-800);}
+
+.note{font-size:12px; color:#5C7085; background:var(--steel-100); border-left:3px solid var(--amber-500); padding:10px 12px; border-radius:0 6px 6px 0; margin-bottom:14px;}
+
+@media(max-width:900px){
+  #shell{flex-direction:column;}
+  #sidebar{width:100%; height:auto; position:relative;}
+  nav{display:flex; overflow-x:auto; gap:4px;}
+  .navbtn{white-space:nowrap;}
+  #main{padding:20px;}
+}
+
+/* ---- Invoice modal ---- */
+#invoice-overlay{
+  display:none; position:fixed; inset:0; background:rgba(11,27,43,.55); z-index:100;
+  align-items:flex-start; justify-content:center; padding:30px 16px; overflow-y:auto;
+}
+#invoice-modal{
+  background:#fff; width:100%; max-width:720px; border-radius:10px; padding:40px 44px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+#invoice-modal.wide{ max-width:1000px; }
+.inv-head{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid var(--navy-950); padding-bottom:18px; margin-bottom:22px;}
+.inv-brand{font-family:'Oswald'; font-size:22px; font-weight:700; color:var(--navy-950); letter-spacing:.02em;}
+.inv-sub{font-size:12px; color:#5C7085; margin-top:3px; line-height:1.5;}
+.inv-title{font-family:'Oswald'; font-size:26px; color:var(--amber-500); text-align:right; letter-spacing:.05em;}
+.inv-meta{text-align:right; font-size:12.5px; color:#5C7085; margin-top:6px; line-height:1.6;}
+.inv-meta strong{color:var(--navy-950);}
+.inv-billto{margin-bottom:20px;}
+.inv-billto .lbl{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:#9FB0C3; font-weight:700; margin-bottom:4px;}
+.inv-billto .name{font-size:16px; font-weight:700; color:var(--navy-950);}
+#invoice-modal table{width:100%; border-collapse:collapse; margin-bottom:8px;}
+#invoice-modal th{background:var(--navy-950); color:#fff; text-align:left; padding:9px 10px; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em;}
+#invoice-modal td{padding:9px 10px; border-bottom:1px solid var(--steel-200); font-size:13px; white-space:normal; vertical-align:top;}
+#invoice-modal th{white-space:normal;}
+.inv-totals{display:flex; justify-content:flex-end; margin-top:10px;}
+.inv-totals table{width:260px;}
+.inv-totals td{border:none; padding:6px 10px;}
+.inv-totals .grand td{font-weight:700; font-size:16px; border-top:2px solid var(--navy-950); color:var(--navy-950);}
+.inv-terms{margin-top:26px; padding-top:16px; border-top:1px solid var(--steel-200); font-size:12px; color:#5C7085; line-height:1.7;}
+.modal-actions{display:flex; gap:10px; justify-content:flex-end; margin-top:26px;}
+
+@media print{
+  body *{visibility:hidden;}
+  #invoice-overlay, #invoice-modal, #invoice-modal *{visibility:visible; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;}
+  #invoice-overlay{position:absolute; inset:auto; top:0; left:0; width:100%; overflow:visible; background:none; padding:0; display:block !important;}
+  #invoice-modal{position:absolute; top:0; left:0; width:100%; max-width:none; box-shadow:none; border-radius:0;}
+  .no-print{display:none !important;}
+  .invoice-page:not(:last-child){page-break-after:always;}
+}
