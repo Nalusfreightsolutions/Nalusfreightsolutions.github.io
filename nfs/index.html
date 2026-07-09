@@ -4788,6 +4788,12 @@ function attachHandlers(){
     const job = state.salesJobs.find(j=>j.id===jobId);
     if(!job) return;
     if(!Array.isArray(job.payments)) job.payments = [];
+    // A job may carry a Paid amount recorded before the log existed — fold it
+    // in as the first entry so it stays visible instead of being silently
+    // replaced once the log (sum of entries) becomes the source of truth.
+    if(!job.payments.length && (Number(job.amountPaid)||0) > 0){
+      job.payments.push({ id:uid(), date:'', amount:+Number(job.amountPaid).toFixed(2), note:'Previously recorded' });
+    }
     job.payments.push({ id:uid(), date:new Date().toISOString().slice(0,10), amount:+amount.toFixed(2), note:(noteInput&&noteInput.value.trim())||'' });
     computeJobBilledToDate(job);
     persist(); render();
@@ -4800,6 +4806,10 @@ function attachHandlers(){
     if(!p) return;
     showConfirm(`Remove the ${fmtMoney(p.amount)} payment recorded on ${fmtDate(p.date)}?`, ()=>{
       job.payments = job.payments.filter(x=>x.id!==paymentId);
+      // If the last entry was just removed, zero Paid explicitly — otherwise
+      // computeJobBilledToDate's legacy fallback would resurrect the stale
+      // pre-delete total from job.amountPaid.
+      if(!job.payments.length) job.amountPaid = 0;
       computeJobBilledToDate(job);
       persist(); render();
     });
