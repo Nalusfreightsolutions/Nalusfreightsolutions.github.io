@@ -99,6 +99,10 @@ function exportAllExcel(company){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildLoadsSheetData(company)), company+' Loads');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildExpensesSheetData()), 'Expenses');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildAnnualSheetData()), company+' Annual');
+  // Each app can define extraExportSheets(wb) to append its own sheets —
+  // NFS uses this for Clients / Pits / Quotes / Landed Jobs, which only
+  // exist in that app's state. NNL doesn't define it.
+  if(typeof extraExportSheets==='function') extraExportSheets(wb);
   const name = company==='NNL' ? 'Nalu_Nui_Logistics' : 'Nalu_Freight_Solutions';
   writeWorkbook(wb, `${name}_Backup_${new Date().toISOString().slice(0,10)}.xlsx`);
 }

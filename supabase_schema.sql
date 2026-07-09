@@ -241,6 +241,9 @@ create table sales_jobs (
   notes text,
   quote_id text references quotes(id),
   amount_paid numeric not null default 0,
+  -- Payment history log: array of {id, date, amount, note} — one entry per
+  -- check received. amount_paid is kept in sync as the sum of these.
+  payments jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
 );
 

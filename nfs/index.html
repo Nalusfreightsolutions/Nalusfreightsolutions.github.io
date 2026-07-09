@@ -918,10 +918,18 @@ function rowToQuote(r, allMaterials){
     materials: allMaterials.filter(m=>m.quote_id===r.id).map(m=>rowToMaterialLine(m,false)) };
 }
 
+// Set true by fetchStateFromSupabase once it confirms the payments column
+// exists. Guarded so that if the owner hasn't run the one-time ALTER TABLE
+// yet, we don't include an unknown column in upserts — that would make EVERY
+// sales_jobs save silently fail, the exact failure mode of the earlier
+// missing-profit_percent_override incident.
+let PAYMENTS_COLUMN_EXISTS = false;
 function salesJobToRow(j){
-  return { id:j.id, client_name:j.client||null, job_name:j.jobName||null, job_address:j.jobAddress||null,
+  const row = { id:j.id, client_name:j.client||null, job_name:j.jobName||null, job_address:j.jobAddress||null,
     job_started:j.jobStarted||null, job_ended:j.jobEnded||null, sales_rep:j.salesRep||null, notes:j.notes||null,
     quote_id:j.quoteId||null, amount_paid:numOrNull(j.amountPaid)||0 };
+  if(PAYMENTS_COLUMN_EXISTS) row.payments = j.payments||[];
+  return row;
 }
 function materialLineToSalesJobRow(m, jobId){
   return { id:m.id, sales_job_id:jobId, pit_id:m.pit||null, material:m.material||null, unit:m.unit||null,
@@ -934,6 +942,7 @@ function rowToSalesJob(r, allMaterials){
   return { id:r.id, quoteId:r.quote_id||undefined, client:r.client_name||'', jobName:r.job_name||'', jobAddress:r.job_address||'',
     jobStarted:r.job_started||'', jobEnded:r.job_ended||'', salesRep:r.sales_rep||'', notes:r.notes||'',
     amountPaid: Number(r.amount_paid)||0,
+    payments: Array.isArray(r.payments)? r.payments : [],
     materials: allMaterials.filter(m=>m.sales_job_id===r.id).map(m=>rowToMaterialLine(m,true)) };
 }
 
@@ -1170,6 +1179,19 @@ async function fetchStateFromSupabase(){
     console.warn('payroll_deductions not available yet — run the setup SQL to enable editable payroll deductions.', e.message||e);
     state.payrollDeductions = [];
   }
+
+  // Probe for the payments column (payment history log). If the one-time
+  // ALTER TABLE hasn't been run yet, keep the flag false so salesJobToRow
+  // omits the column and job saves keep working — the payment log just stays
+  // disabled until the SQL is run.
+  try{
+    const { error } = await sbClient.from('sales_jobs').select('payments').limit(1);
+    if(error) throw error;
+    PAYMENTS_COLUMN_EXISTS = true;
+  }catch(e){
+    PAYMENTS_COLUMN_EXISTS = false;
+    console.warn('sales_jobs.payments column not available yet — run the setup SQL to enable the payment history log.', e.message||e);
+  }
 }
 
 // Tracks whether loadState() has actually finished populating `state` from
@@ -1337,21 +1359,30 @@ function renderNfsBalancesBanner(){
   <div class="card" style="border-color:#F3B9B4;">
     <h2 style="color:var(--bad-500);">⚠ NFS Client Balances <span class="tag">${fmtMoney(totalDue)} outstanding</span></h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Client</th><th>Job Name</th><th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Add Payment</th></tr></thead>
+      <thead><tr><th>Client</th><th>Job Name</th><th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Record a Payment</th></tr></thead>
       <tbody>
         ${balances.map(j=>`<tr>
           <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
           <td class="num">${fmtMoney(j.billedToDate)}</td>
-          <td class="num"><input type="number" step="0.01" min="0" value="${j.amountPaid}" data-set-paid="${j.id}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; text-align:right;"></td>
+          <td class="num">${fmtMoney(j.amountPaid)}${paymentLogHtml(j)}</td>
           <td class="num" style="color:var(--bad-500);font-weight:700;">${fmtMoney(j.balanceDue)}</td>
           <td><div style="display:flex; gap:6px; justify-content:flex-end;">
             <input type="number" step="0.01" min="0" placeholder="0.00" data-payment-input="${j.id}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+            <input type="text" placeholder="Check # (optional)" data-payment-note="${j.id}" style="width:120px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
             <button class="btn btn-primary btn-sm" data-add-payment="${j.id}">+ Add</button>
           </div></td>
         </tr>`).join('')}
       </tbody>
     </table></div>
   </div>`;
+}
+// Small per-check history under the Paid amount — each entry deletable, so a
+// mistaken entry is corrected by removing it rather than overtyping a total.
+function paymentLogHtml(j){
+  if(!j.payments || !j.payments.length) return '';
+  return `<div style="margin-top:4px;">${j.payments.map(p=>
+    `<div style="font-size:11px; color:#5C7085; white-space:nowrap;">${fmtDate(p.date)} · ${fmtMoney(p.amount)}${p.note? ' · '+p.note : ''} <button data-del-payment="${j.id}|${p.id}" style="background:none; border:none; color:var(--bad-500); cursor:pointer; font-size:11px; padding:0 2px;" title="Remove this payment">✕</button></div>`
+  ).join('')}</div>`;
 }
 
 /* ============================= DASHBOARD ============================= */
@@ -2595,7 +2626,10 @@ function computeJobBilledToDate(job){
   job.materialCostToDate = +materialCost.toFixed(2);
   job.truckingCostToDate = +truckingCost.toFixed(2);
   job.taxToDate = +tax.toFixed(2);
-  job.amountPaid = Number(job.amountPaid)||0;
+  // Paid comes from the payment log (one entry per check) when it has entries;
+  // a legacy amount_paid value with no log entries is honored as-is so nothing
+  // recorded before the log existed gets lost.
+  job.amountPaid = (job.payments&&job.payments.length)? +sum(job.payments,'amount').toFixed(2) : (Number(job.amountPaid)||0);
   job.balanceDue = +(job.billedToDate - job.amountPaid).toFixed(2);
   return job;
 }
@@ -3119,7 +3153,7 @@ function renderSalesJobsSection(){
             <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
             <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td>
             <td class="num">${fmtMoney(j.billedToDate)}</td>
-            <td class="num"><input type="number" step="0.01" min="0" value="${j.amountPaid}" data-set-paid="${j.id}" style="width:85px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px; text-align:right;"></td>
+            <td class="num">${fmtMoney(j.amountPaid)}${paymentLogHtml(j)}</td>
             <td class="num" style="${j.balanceDue>0.01?'color:var(--bad-500);font-weight:700;':''}">${fmtMoney(j.balanceDue)}</td>
             <td>${j.salesRep||''}</td>
             <td><button class="btn btn-ghost btn-sm" data-edit-salesjob="${j.id}">Edit</button> <button class="btn btn-danger btn-sm" data-del-salesjob="${j.id}">Delete</button></td>
@@ -3525,6 +3559,48 @@ function drawReportsCharts(company){
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:12, font:{size:10.5} } } } }
     });
   }
+}
+
+// Hook called by shared/backup.js's exportAllExcel — adds NFS-only sheets so
+// the Excel export actually covers the sales side (clients, pits, quotes,
+// landed jobs), not just loads/expenses/annual.
+function extraExportSheets(wb){
+  const clientRows = state.clients.length? state.clients.map(c=>({
+    Name:c.name||'', 'Office Address':c.officeAddress||'',
+    Contacts:(c.contacts||[]).map(ct=>[ct.name,ct.title,ct.email].filter(Boolean).join(' · ')).join(' | '),
+    Notes:c.notes||''
+  })) : [{Note:'No clients yet'}];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientRows), 'Clients');
+
+  const pitRows = state.pits.length? state.pits.map(p=>({
+    Pit:pitLabel(p), Address:p.address||'', 'Tax Rate %':Number(p.taxRate)||0,
+    'Prices Verified':p.pricesVerifiedDate||'', Notes:p.notes||''
+  })) : [{Note:'No pits yet'}];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pitRows), 'Pits');
+
+  const pitMatRows = [];
+  state.pits.forEach(p=>{
+    (p.materials||[]).forEach(m=>pitMatRows.push({Pit:pitLabel(p), Material:m.name||'', 'Price ($)':Number(m.price)||0, Unit:m.unit||'', Kind:'Material'}));
+    (p.dumpFees||[]).forEach(m=>pitMatRows.push({Pit:pitLabel(p), Material:m.name||'', 'Price ($)':Number(m.price)||0, Unit:m.unit||'', Kind:'Dump Fee'}));
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pitMatRows.length? pitMatRows : [{Note:'No pit materials yet'}]), 'Pit Materials');
+
+  state.quotes.forEach(computeDocTotals);
+  const quoteRows = state.quotes.length? state.quotes.map(q=>({
+    Date:q.date||'', Client:q.client||'', 'Job Name':q.jobName||'', 'Submitted By':q.submittedBy||'', Status:q.status||'',
+    Materials:(q.materials||[]).filter(m=>m.material).map(m=>`${m.material} (${m.qtyRequested||0} ${m.unit||''})`).join(' | '),
+    'Material ($)':q.totalMaterial||0, 'Tax ($)':q.totalTax||0, 'Trucking ($)':q.totalTrucking||0,
+    'Profit ($)':q.totalProfit||0, 'Quote Total ($)':q.totalBilled||0
+  })) : [{Note:'No quotes yet'}];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(quoteRows), 'Quotes');
+
+  state.salesJobs.forEach(computeJobBilledToDate);
+  const jobRows = state.salesJobs.length? state.salesJobs.map(j=>({
+    Client:j.client||'', 'Job Name':j.jobName||'', Started:j.jobStarted||'', Ended:j.jobEnded||'', Rep:j.salesRep||'',
+    'Job Total ($)':j.totalBilled||0, 'Billed to Date ($)':j.billedToDate||0,
+    'Paid ($)':j.amountPaid||0, 'Balance Due ($)':j.balanceDue||0, 'Profit to Date ($)':j.profitToDate||0
+  })) : [{Note:'No landed jobs yet'}];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(jobRows), 'Landed Jobs');
 }
 
 function renderNfsSalesReportCard(year){
@@ -4700,23 +4776,33 @@ function attachHandlers(){
     refreshPitMapCalc();
   };
 
-  // NFS client balance payments
+  // NFS client balance payments — each check is its own log entry (date,
+  // amount, optional check #). Corrections are made by removing an entry
+  // (✕ next to it), not by overtyping a total.
   document.querySelectorAll('[data-add-payment]').forEach(b=>b.onclick=()=>{
     const jobId = b.dataset.addPayment;
     const input = document.querySelector(`[data-payment-input="${jobId}"]`);
+    const noteInput = document.querySelector(`[data-payment-note="${jobId}"]`);
     const amount = Number(input && input.value)||0;
     if(amount<=0){ alert('Enter a payment amount first.'); return; }
     const job = state.salesJobs.find(j=>j.id===jobId);
     if(!job) return;
-    job.amountPaid = +((Number(job.amountPaid)||0) + amount).toFixed(2);
+    if(!Array.isArray(job.payments)) job.payments = [];
+    job.payments.push({ id:uid(), date:new Date().toISOString().slice(0,10), amount:+amount.toFixed(2), note:(noteInput&&noteInput.value.trim())||'' });
+    computeJobBilledToDate(job);
     persist(); render();
   });
-  document.querySelectorAll('[data-set-paid]').forEach(inp=>inp.onchange=()=>{
-    const jobId = inp.dataset.setPaid;
+  document.querySelectorAll('[data-del-payment]').forEach(b=>b.onclick=()=>{
+    const [jobId, paymentId] = b.dataset.delPayment.split('|');
     const job = state.salesJobs.find(j=>j.id===jobId);
-    if(!job) return;
-    job.amountPaid = Math.max(0, Number(inp.value)||0);
-    persist(); render();
+    if(!job || !Array.isArray(job.payments)) return;
+    const p = job.payments.find(x=>x.id===paymentId);
+    if(!p) return;
+    showConfirm(`Remove the ${fmtMoney(p.amount)} payment recorded on ${fmtDate(p.date)}?`, ()=>{
+      job.payments = job.payments.filter(x=>x.id!==paymentId);
+      computeJobBilledToDate(job);
+      persist(); render();
+    });
   });
 
   // Excel export
