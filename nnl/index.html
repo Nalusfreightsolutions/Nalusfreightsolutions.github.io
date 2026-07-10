@@ -101,7 +101,7 @@
 <script src="/shared/format.js"></script>
 <script src="/shared/sync.js"></script>
 <script src="/shared/backup.js"></script>
-<script src="/shared/invoice-print.js"></script>
+<script src="/shared/invoice-print.js?v=2"></script>
 <script>
 /* ============================= NNL — Nalu Nui Logistics (trucking) ============================= */
 const COMPANY = 'NNL';
@@ -152,6 +152,24 @@ function setDeduction(company, driver, weekStart, weekEnd, amount){
     state.payrollDeductions.push(d);
   }
   d.amount = Number(amount)||0;
+  persist();
+}
+// Payment tracking on the same per-driver-per-week record: what the driver
+// was paid with (check # or "Zelle") and whether that check has actually
+// been deposited yet.
+function getPayrollRecord(driver, weekStart, weekEnd){
+  return state.payrollDeductions.find(d=> d.driver===driver && d.weekStart===weekStart && d.weekEnd===weekEnd) || null;
+}
+function setPayrollField(company, driver, weekStart, weekEnd, field, value){
+  let d = getPayrollRecord(driver, weekStart, weekEnd);
+  if(!d){
+    // Seed amount with the currently effective deduction — creating this
+    // record just to store a check # must not silently change the driver's
+    // deduction (getEffectiveDeduction trusts an existing record's amount).
+    d = { id:uid(), company, driver, weekStart, weekEnd, amount:getEffectiveDeduction(driver, weekStart, weekEnd), note:'', payRef:'', deposited:false };
+    state.payrollDeductions.push(d);
+  }
+  d[field] = value;
   persist();
 }
 // One-time migration: the owner's 4 company drivers/trucks used to be logged
@@ -260,13 +278,19 @@ function rowToExpense(r){
     amount:r.amount??'', frequency:r.frequency||'', notes:r.notes||'' };
 }
 
+// Set true once fetchStateFromSupabase confirms the pay_ref/deposited columns
+// exist — guarded like the other optional columns so payroll saves keep
+// working (payment tracking just stays disabled) until the setup SQL is run.
+let PAYROLL_PAYREF_COLUMNS_EXIST = false;
 function payrollDeductionToRow(d){
-  return { id:d.id, company:d.company, driver:d.driver, week_start:d.weekStart, week_end:d.weekEnd,
+  const row = { id:d.id, company:d.company, driver:d.driver, week_start:d.weekStart, week_end:d.weekEnd,
     amount:numOrNull(d.amount), note:d.note||null };
+  if(PAYROLL_PAYREF_COLUMNS_EXIST){ row.pay_ref = d.payRef||null; row.deposited = !!d.deposited; }
+  return row;
 }
 function rowToPayrollDeduction(r){
   return { id:r.id, company:r.company, driver:r.driver, weekStart:r.week_start, weekEnd:r.week_end,
-    amount:r.amount??0, note:r.note||'' };
+    amount:r.amount??0, note:r.note||'', payRef:r.pay_ref||'', deposited:!!r.deposited };
 }
 
 // Set true by fetchStateFromSupabase once it confirms the broker_payments
@@ -483,6 +507,16 @@ async function fetchStateFromSupabase(){
     const { data, error } = await sbClient.from('payroll_deductions').select('*').eq('company','NNL');
     if(error) throw error;
     state.payrollDeductions = (data||[]).map(rowToPayrollDeduction);
+    // Separate probe for the payment-tracking columns (pay_ref/deposited),
+    // which were added later than the table itself.
+    try{
+      const probe = await sbClient.from('payroll_deductions').select('pay_ref').limit(1);
+      if(probe.error) throw probe.error;
+      PAYROLL_PAYREF_COLUMNS_EXIST = true;
+    }catch(e2){
+      PAYROLL_PAYREF_COLUMNS_EXIST = false;
+      console.warn('payroll_deductions.pay_ref/deposited columns not available yet — run the setup SQL to enable payroll payment tracking.', e2.message||e2);
+    }
   }catch(e){
     console.warn('payroll_deductions not available yet — run the setup SQL to enable editable payroll deductions.', e.message||e);
     state.payrollDeductions = [];
@@ -1530,11 +1564,17 @@ function renderWeeklyTab(){
       const deduction = getEffectiveDeduction(name, start, end);
       const netPay = owed - deduction;
       totalNet += netPay;
-      return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(owed)}</td><td class="num"><input type="number" step="0.01" class="deduction-input" data-driver="${name.replace(/"/g,'&quot;')}" data-company="${primaryCompany}" value="${deduction}" style="width:80px; border:1px solid var(--steel-200); border-radius:5px; padding:5px 7px; text-align:right;"></td><td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td></tr>`;
+      const rec = getPayrollRecord(name, start, end);
+      const nameAttr = name.replace(/"/g,'&quot;');
+      const payCells = PAYROLL_PAYREF_COLUMNS_EXIST ? `
+        <td><input type="text" class="payref-input" placeholder="Check # / Zelle" data-driver="${nameAttr}" data-company="${primaryCompany}" value="${((rec&&rec.payRef)||'').replace(/"/g,'&quot;')}" style="width:110px; border:1px solid var(--steel-200); border-radius:5px; padding:5px 7px;"></td>
+        <td style="text-align:center;"><input type="checkbox" class="deposited-check" data-driver="${nameAttr}" data-company="${primaryCompany}" ${(rec&&rec.deposited)?'checked':''} title="Check this once the driver has deposited the check" style="width:16px; height:16px; cursor:pointer;"></td>`
+        : `<td colspan="2" style="font-size:11px; color:#9FB0C3;">Run the setup SQL to enable</td>`;
+      return `<tr><td>${driverNameCell(name)}</td><td>${companies}</td><td class="num">${items.length}</td><td class="num">${fmtMoney(owed)}</td><td class="num"><input type="number" step="0.01" class="deduction-input" data-driver="${nameAttr}" data-company="${primaryCompany}" value="${deduction}" style="width:80px; border:1px solid var(--steel-200); border-radius:5px; padding:5px 7px; text-align:right;"></td><td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td>${payCells}</tr>`;
     }).join('');
-    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th></tr></thead><tbody>
+    return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th><th>Paid Via</th><th>Deposited</th></tr></thead><tbody>
       ${bodyRows}
-      <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td></tr>
+      <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td><td colspan="2"></td></tr>
     </tbody></table></div>`;
   }
 
@@ -2441,6 +2481,16 @@ function attachHandlers(){
     inp.onchange = ()=>{
       setDeduction(inp.dataset.company, inp.dataset.driver, weeklyRange.start, weeklyRange.end, inp.value);
       render();
+    };
+  });
+  document.querySelectorAll('.payref-input').forEach(inp=>{
+    inp.onchange = ()=>{
+      setPayrollField(inp.dataset.company, inp.dataset.driver, weeklyRange.start, weeklyRange.end, 'payRef', inp.value.trim());
+    };
+  });
+  document.querySelectorAll('.deposited-check').forEach(cb=>{
+    cb.onchange = ()=>{
+      setPayrollField(cb.dataset.company, cb.dataset.driver, weeklyRange.start, weeklyRange.end, 'deposited', cb.checked);
     };
   });
 

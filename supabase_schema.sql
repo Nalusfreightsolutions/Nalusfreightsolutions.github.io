@@ -412,6 +412,10 @@ create table payroll_deductions (
   week_end date not null,
   amount numeric not null default 0,
   note text,
+  -- Payment tracking for the same driver+week: what they were paid with
+  -- (check # or "Zelle") and whether that check has been deposited yet.
+  pay_ref text,
+  deposited boolean not null default false,
   created_at timestamptz not null default now()
 );
 

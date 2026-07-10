@@ -158,6 +158,11 @@ function printDriverPayroll(){
     const deduction = getEffectiveDeduction(name, start, end);
     const netPay = owed - deduction;
     totalNet += netPay;
+    // Payment tracking (check #/Zelle + deposited) — defined per-app; shows
+    // the stored value, or a blank line to hand-write on the printed sheet.
+    const rec = (typeof getPayrollRecord==='function') ? getPayrollRecord(name, start, end) : null;
+    const payRef = (rec&&rec.payRef)||'';
+    const deposited = !!(rec&&rec.deposited);
     return `
     <tr>
       <td>${name}${flag ? ` <span style="color:#C0362C; font-weight:700;">⚠ ${flag}</span>` : ''}</td>
@@ -166,6 +171,8 @@ function printDriverPayroll(){
       <td class="num">${fmtMoney(owed)}</td>
       <td class="num">${deduction? '-'+fmtMoney(deduction) : '—'}</td>
       <td class="num" style="font-weight:700;">${fmtMoney(netPay)}</td>
+      <td>${payRef || '<span style="display:inline-block; width:90px; border-bottom:1px solid #9FB0C3;">&nbsp;</span>'}</td>
+      <td style="text-align:center; font-size:15px;">${deposited? '☑' : '☐'}</td>
     </tr>`;
   }).join('');
 
@@ -180,7 +187,7 @@ function printDriverPayroll(){
       </div>
     </div>
     <table>
-      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th></tr></thead>
+      <thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th><th>Paid Via (Check # / Zelle)</th><th>Deposited</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
