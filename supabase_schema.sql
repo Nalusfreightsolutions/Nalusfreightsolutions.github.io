@@ -420,6 +420,26 @@ alter table payroll_deductions enable row level security;
 create policy "owner only payroll_deductions" on payroll_deductions for all
   using (is_owner()) with check (is_owner());
 
+-- ---------- 11c. BROKER PAYMENTS (NNL) ----------
+-- Checks received per broker — brokers don't always pay the invoiced amount
+-- exactly, so each check is logged (date, amount, check #) and the Dashboard
+-- shows Billed vs Paid vs Balance Due per broker instead of the all-or-nothing
+-- per-load Paid status. Owner-only, same reasoning as payroll_deductions.
+create table broker_payments (
+  id text primary key,
+  company text not null default 'NNL' check (company in ('NNL','NFS')),
+  broker text,
+  date date,
+  amount numeric not null default 0,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table broker_payments enable row level security;
+
+create policy "owner only broker_payments" on broker_payments for all
+  using (is_owner()) with check (is_owner());
+
 -- ---------- 13. TABLE-LEVEL GRANTS ----------
 -- "grant all on schema public" earlier only grants schema-level access (USAGE/CREATE).
 -- Postgres also requires explicit table-level privileges before RLS policies even

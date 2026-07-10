@@ -121,7 +121,8 @@ let state = {
     {id:'a2', item:'License Plates Renewal', amount:0, due:'2026-12-01', status:'Unpaid'}
   ],
   invoiceCounter: 1000,
-  payrollDeductions: [] // {id, company, driver, weekStart, weekEnd, amount, note} — per-driver, per-week payroll deductions (e.g. truck wash)
+  payrollDeductions: [], // {id, company, driver, weekStart, weekEnd, amount, note} — per-driver, per-week payroll deductions (e.g. truck wash)
+  brokerPayments: [] // {id, broker, date, amount, note} — checks received per broker, since brokers don't always pay the invoiced amount exactly
 };
 
 const BUSINESS_INFO = {
@@ -266,6 +267,19 @@ function payrollDeductionToRow(d){
 function rowToPayrollDeduction(r){
   return { id:r.id, company:r.company, driver:r.driver, weekStart:r.week_start, weekEnd:r.week_end,
     amount:r.amount??0, note:r.note||'' };
+}
+
+// Set true by fetchStateFromSupabase once it confirms the broker_payments
+// table exists — same guarded pattern as payroll_deductions, so the app keeps
+// working (payment recording just stays disabled) until the one-time setup
+// SQL is run, instead of every save silently failing.
+let BROKER_PAYMENTS_TABLE_EXISTS = false;
+function brokerPaymentToRow(p){
+  return { id:p.id, company:'NNL', broker:p.broker||null, date:p.date||null,
+    amount:numOrNull(p.amount), note:p.note||null };
+}
+function rowToBrokerPayment(r){
+  return { id:r.id, broker:r.broker||'', date:r.date||'', amount:r.amount??0, note:r.note||'' };
 }
 
 function complianceToRow(c){
@@ -436,6 +450,11 @@ async function syncStateToSupabase(){
 
   await upsertTable('payroll_deductions', state.payrollDeductions.map(payrollDeductionToRow));
   await deleteMissing('payroll_deductions', state.payrollDeductions.map(d=>d.id), 'NNL');
+
+  if(BROKER_PAYMENTS_TABLE_EXISTS){
+    await upsertTable('broker_payments', state.brokerPayments.map(brokerPaymentToRow));
+    await deleteMissing('broker_payments', state.brokerPayments.map(p=>p.id), 'NNL');
+  }
 }
 
 async function fetchStateFromSupabase(){
@@ -467,6 +486,19 @@ async function fetchStateFromSupabase(){
   }catch(e){
     console.warn('payroll_deductions not available yet — run the setup SQL to enable editable payroll deductions.', e.message||e);
     state.payrollDeductions = [];
+  }
+
+  // Same guarded pattern: broker payment recording stays disabled (and is
+  // excluded from saves) until the one-time setup SQL creates the table.
+  try{
+    const { data, error } = await sbClient.from('broker_payments').select('*').eq('company','NNL');
+    if(error) throw error;
+    state.brokerPayments = (data||[]).map(rowToBrokerPayment);
+    BROKER_PAYMENTS_TABLE_EXISTS = true;
+  }catch(e){
+    console.warn('broker_payments not available yet — run the setup SQL to enable recording broker payments.', e.message||e);
+    state.brokerPayments = [];
+    BROKER_PAYMENTS_TABLE_EXISTS = false;
   }
 }
 
@@ -628,37 +660,73 @@ function render(){
 }
 
 /* ============================= OVERDUE ALERTS ============================= */
+function paymentsForBroker(broker){
+  const key = (broker||'').trim().toLowerCase();
+  return state.brokerPayments.filter(p=>(p.broker||'').trim().toLowerCase()===key);
+}
 function getOverdueInvoices(){
   const today = new Date().toISOString().slice(0,10);
   const flagged = state.loads.filter(l=> l.status!=='Paid' && l.date);
   const groups = {};
   flagged.forEach(l=>{
-    const key = l.company+'|'+l.party;
-    if(!groups[key]) groups[key] = {company:l.company, party:l.party, items:[]};
+    const key = (l.party||'').trim().toLowerCase();
+    if(!groups[key]) groups[key] = {party:l.party, items:[]};
     groups[key].items.push(l);
+  });
+  // Brokers with recorded checks but no unpaid loads still get a row — either
+  // an overpayment credit, or a settled cycle whose history hasn't been
+  // cleared yet. They'd otherwise vanish from view while money is unaccounted.
+  state.brokerPayments.forEach(p=>{
+    const key = (p.broker||'').trim().toLowerCase();
+    if(!groups[key]) groups[key] = {party:p.broker, items:[]};
   });
   return Object.values(groups).map(g=>{
     const loadDates = g.items.map(l=>l.date).sort();
-    const oldestDate = loadDates[0];
-    const daysOverdue = Math.max(0, Math.round((new Date(today)-new Date(oldestDate))/86400000));
-    return { ...g, total: sum(g.items,'revenue'), daysOverdue, oldestDate };
-  }).sort((a,b)=> b.daysOverdue - a.daysOverdue);
+    const oldestDate = loadDates[0]||null;
+    const daysOverdue = oldestDate? Math.max(0, Math.round((new Date(today)-new Date(oldestDate))/86400000)) : 0;
+    const billed = sum(g.items,'revenue');
+    const payments = paymentsForBroker(g.party);
+    const paid = +sum(payments,'amount').toFixed(2);
+    return { ...g, billed, paid, payments, balance:+(billed-paid).toFixed(2), daysOverdue, oldestDate };
+  }).filter(g=>g.items.length || g.payments.length)
+    .sort((a,b)=> b.daysOverdue - a.daysOverdue);
+}
+function brokerPaymentLogHtml(o){
+  if(!o.payments.length) return '';
+  return `<div style="margin-top:4px;">${o.payments.map(p=>
+    `<div style="font-size:11px; color:#5C7085; white-space:nowrap;">${fmtDate(p.date)} · ${fmtMoney(p.amount)}${p.note? ' · '+p.note : ''} <button data-del-broker-payment="${p.id}" style="background:none; border:none; color:var(--bad-500); cursor:pointer; font-size:11px; padding:0 2px;" title="Remove this payment">✕</button></div>`
+  ).join('')}</div>`;
 }
 function renderOverdueBanner(){
   const overdue = getOverdueInvoices();
   if(!overdue.length){
     return `<div class="card"><div class="balancebar ok"><span>NNL — all caught up, nothing outstanding ✓</span><span></span></div></div>`;
   }
-  const totalOverdue = sum(overdue,'total');
+  const totalOverdue = sum(overdue,'balance');
+  const recordCell = o => BROKER_PAYMENTS_TABLE_EXISTS ? `
+    <div style="display:flex; gap:6px; justify-content:flex-end;">
+      <input type="number" step="0.01" min="0" placeholder="0.00" data-broker-payment-input="${encodeURIComponent(o.party)}" style="width:90px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+      <input type="text" placeholder="Check # (optional)" data-broker-payment-note="${encodeURIComponent(o.party)}" style="width:120px; padding:5px 7px; border:1.5px solid var(--steel-200); border-radius:6px; font-size:12.5px;">
+      <button class="btn btn-primary btn-sm" data-add-broker-payment="${encodeURIComponent(o.party)}">+ Add</button>
+      ${(!o.items.length || Math.abs(o.balance)<0.01)? `<button class="btn btn-ghost btn-sm" data-settle-broker="${encodeURIComponent(o.party)}" title="Mark these loads Paid and clear this broker's check history">Settle</button>` : ''}
+    </div>` : `<span style="font-size:11px; color:#9FB0C3;">Run the setup SQL to enable</span>`;
   return `
   <div class="card" style="border-color:#F3B9B4;">
     <h2 style="color:var(--bad-500);">⚠ NNL Overdue — Not Yet Paid <span class="tag">${fmtMoney(totalOverdue)} outstanding</span></h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Company</th><th>Broker / Client</th><th>Days Outstanding</th><th>Amount</th></tr></thead>
+      <thead><tr><th>Broker</th><th>Days Outstanding</th><th>Billed (Unpaid Loads)</th><th>Paid</th><th>Balance Due</th><th>Record a Payment</th></tr></thead>
       <tbody>
-        ${overdue.map(o=>`<tr><td>${o.company}</td><td><strong>${o.party}</strong></td><td class="num" style="color:var(--bad-500);font-weight:700;">${o.daysOverdue}d</td><td class="num">${fmtMoney(o.total)}</td></tr>`).join('')}
+        ${overdue.map(o=>`<tr>
+          <td><strong>${o.party}</strong></td>
+          <td class="num" style="color:var(--bad-500);font-weight:700;">${o.items.length? o.daysOverdue+'d' : '—'}</td>
+          <td class="num">${fmtMoney(o.billed)}</td>
+          <td class="num">${fmtMoney(o.paid)}${brokerPaymentLogHtml(o)}</td>
+          <td class="num" style="font-weight:700; color:${o.balance>0.01?'var(--bad-500)':'var(--good-500)'};">${fmtMoney(o.balance)}${o.balance<-0.01? ' (credit)':''}</td>
+          <td>${recordCell(o)}</td>
+        </tr>`).join('')}
       </tbody>
     </table></div>
+    <div class="note" style="margin-top:10px;">Log each check as it arrives — short payments stay visible as a Balance Due instead of disappearing when loads get marked Paid. Once a broker's balance hits $0 (or you're done chasing it), click <strong>Settle</strong> to mark those loads Paid and clear the check history for the next cycle.</div>
   </div>`;
 }
 
@@ -673,7 +741,9 @@ function renderDashboard(){
   // those too, not just driver pay.
   const nnlNet = +(nnlRev - nnlPay - nnlExp).toFixed(2);
   const pendingNNL = nnl.filter(l=>l.status!=='Paid');
-  const pendingTotal = sum(pendingNNL,'revenue');
+  // Net of checks already received (broker payment log) — a short-paying
+  // broker's remaining balance counts, money already in hand doesn't.
+  const pendingTotal = sum(getOverdueInvoices(),'balance');
   const wk = currentWeekEnding;
   const wkLoads = state.loads.filter(l=>weekEndingFriday(l.date)===wk);
   const wkRev = sum(wkLoads,'revenue');
@@ -2424,6 +2494,39 @@ function attachHandlers(){
   document.querySelectorAll('[data-invoice]').forEach(b=>b.onclick=()=>{
     const [company, partyEnc, startDate, endDate] = b.dataset.invoice.split('|');
     openInvoice(company, decodeURIComponent(partyEnc), {startDate, endDate});
+  });
+
+  // Broker payments — each check is its own log entry (date, amount, optional
+  // check #); corrections are made by removing an entry, not overtyping.
+  document.querySelectorAll('[data-add-broker-payment]').forEach(b=>b.onclick=()=>{
+    const broker = decodeURIComponent(b.dataset.addBrokerPayment);
+    const enc = b.dataset.addBrokerPayment;
+    const input = document.querySelector(`[data-broker-payment-input="${enc}"]`);
+    const noteInput = document.querySelector(`[data-broker-payment-note="${enc}"]`);
+    const amount = Number(input && input.value)||0;
+    if(amount<=0){ alert('Enter a payment amount first.'); return; }
+    state.brokerPayments.push({ id:uid(), broker, date:new Date().toISOString().slice(0,10), amount:+amount.toFixed(2), note:(noteInput&&noteInput.value.trim())||'' });
+    persist(); render();
+  });
+  document.querySelectorAll('[data-del-broker-payment]').forEach(b=>b.onclick=()=>{
+    const p = state.brokerPayments.find(x=>x.id===b.dataset.delBrokerPayment);
+    if(!p) return;
+    showConfirm(`Remove the ${fmtMoney(p.amount)} payment from ${p.broker} recorded on ${fmtDate(p.date)}?`, ()=>{
+      state.brokerPayments = state.brokerPayments.filter(x=>x.id!==p.id);
+      persist(); render();
+    });
+  });
+  document.querySelectorAll('[data-settle-broker]').forEach(b=>b.onclick=()=>{
+    const broker = decodeURIComponent(b.dataset.settleBroker);
+    const key = broker.trim().toLowerCase();
+    const openLoads = state.loads.filter(l=>l.status!=='Paid' && (l.party||'').trim().toLowerCase()===key);
+    const checks = paymentsForBroker(broker);
+    showConfirm(`Settle ${broker}? This marks ${openLoads.length} load(s) as Paid and clears ${checks.length} recorded check(s) so the next billing cycle starts clean.`, ()=>{
+      const today = new Date().toISOString().slice(0,10);
+      openLoads.forEach(l=>{ l.status='Paid'; if(!l.datePaid) l.datePaid = today; });
+      state.brokerPayments = state.brokerPayments.filter(p=>(p.broker||'').trim().toLowerCase()!==key);
+      persist(); render();
+    });
   });
 
   // Excel export
