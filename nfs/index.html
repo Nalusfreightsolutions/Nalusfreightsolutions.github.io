@@ -837,14 +837,20 @@ if(unitpickCancelBtn) unitpickCancelBtn.onclick = hideUnitPicker;
 document.getElementById('safety-banner-dismiss').onclick = ()=>{ document.getElementById('safety-banner').style.display = 'none'; };
 
 /* ---- row <-> app-object mapping (snake_case columns <-> the camelCase shape the rest of the app already expects) ---- */
+// Set true once fetchStateFromSupabase confirms the driver_rate column
+// exists — guarded like the other optional columns so load saves keep
+// working until the one-time ALTER TABLE is run.
+let DRIVER_RATE_COLUMN_EXISTS = false;
 function loadToRow(l){
-  return { id:l.id, company:l.company, date:l.date||null, party:l.party||null, truck:l.truck||null,
+  const row = { id:l.id, company:l.company, date:l.date||null, party:l.party||null, truck:l.truck||null,
     driver:l.driver||null, driver_type:l.driverType||null, job_source:l.jobSource||null, referred_by:l.referredBy||null,
     payment_type:l.paymentType||null, ticket:l.ticket||null, qty:numOrNull(l.qty), rate:numOrNull(l.rate),
     revenue:numOrNull(l.revenue), driver_pay:numOrNull(l.driverPay), net:numOrNull(l.net), status:l.status||'Pending',
     invoice_num:l.invoiceNum||null, date_paid:l.datePaid||null, pit:l.pit||null, customer:l.customer||null,
     job_name:l.jobName||null, material:l.material||null, broker:l.broker||null, notes:l.notes||null,
     invoiced_rate:numOrNull(l.invoicedRate), invoiced_tax:numOrNull(l.invoicedTaxAmount) };
+  if(DRIVER_RATE_COLUMN_EXISTS) row.driver_rate = numOrNull(l.driverRate);
+  return row;
 }
 function rowToLoad(r){
   return { id:r.id, company:r.company, date:r.date||'', party:r.party||'', truck:r.truck||'', driver:r.driver||'',
@@ -852,7 +858,7 @@ function rowToLoad(r){
     ticket:r.ticket||'', qty:r.qty??'', rate:r.rate??'', revenue:r.revenue||0, driverPay:r.driver_pay||0, net:r.net||0,
     status:r.status||'Pending', invoiceNum:r.invoice_num||'', datePaid:r.date_paid||'', pit:r.pit||'', customer:r.customer||'',
     jobName:r.job_name||'', material:r.material||'', broker:r.broker||'', notes:r.notes||'',
-    invoicedRate:r.invoiced_rate??null, invoicedTaxAmount:r.invoiced_tax??null };
+    invoicedRate:r.invoiced_rate??null, invoicedTaxAmount:r.invoiced_tax??null, driverRate:r.driver_rate??'' };
 }
 
 function expenseToRow(e){
@@ -1179,6 +1185,15 @@ async function fetchStateFromSupabase(){
   for(const [k,v] of Object.entries(named)){ if(v.error) throw new Error(k+': '+v.error.message); }
 
   state.loads = (loadsR.data||[]).map(rowToLoad);
+  // Separate probe for the driver_rate column, added later than the table.
+  try{
+    const probe = await sbClient.from('loads').select('driver_rate').limit(1);
+    if(probe.error) throw probe.error;
+    DRIVER_RATE_COLUMN_EXISTS = true;
+  }catch(e){
+    DRIVER_RATE_COLUMN_EXISTS = false;
+    console.warn('loads.driver_rate not available yet — run the setup SQL so custom driver rates persist.', e.message||e);
+  }
   state.expenses = (expensesR.data||[]).map(rowToExpense);
   state.annual = (annualR.data||[]).map(rowToAnnual);
   const invRow = (invCounterR.data||[])[0];
@@ -4733,6 +4748,7 @@ function attachHandlers(){
   document.querySelectorAll('.deposited-check').forEach(cb=>{
     cb.onchange = ()=>{
       setPayrollField(cb.dataset.company, cb.dataset.driver, weeklyRange.start, weeklyRange.end, 'deposited', cb.checked);
+      render();
     };
   });
 

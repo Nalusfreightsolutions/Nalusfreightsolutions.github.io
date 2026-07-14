@@ -69,6 +69,12 @@ create table loads (
   material text,
   broker text,
   notes text,
+  -- The per-unit "Driver's Rate" typed on a load (NNL: gets a 30% Company
+  -- Driver cut applied on top; NFS: paid in full). Previously computed into
+  -- driver_pay but never itself saved, so it silently reset to blank on
+  -- reload — the root cause of a real payroll-corruption incident (editing
+  -- any other field on a load re-ran the pay calc from a blank rate).
+  driver_rate numeric,
   -- Locked in at invoice time (NFS client invoices): the rate/tax this load
   -- was actually billed at, so editing a job's pricing later can't silently
   -- change an invoice already sent. Null until the load is invoiced.
