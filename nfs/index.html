@@ -103,7 +103,7 @@
 <script src="/shared/format.js"></script>
 <script src="/shared/sync.js"></script>
 <script src="/shared/backup.js"></script>
-<script src="/shared/invoice-print.js?v=2"></script>
+<script src="/shared/invoice-print.js?v=3"></script>
 <script>
 /* ============================= NFS — Nalu's Freight Solutions (materials + trucking sales) ============================= */
 const COMPANY = 'NFS';
@@ -1396,7 +1396,7 @@ function renderNfsBalancesBanner(){
       <thead><tr><th>Client</th><th>Job Name</th><th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Record a Payment</th></tr></thead>
       <tbody>
         ${balances.map(j=>`<tr>
-          <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}</td>
+          <td><strong>${j.client||''}</strong></td><td>${j.jobName||''}${unpricedWarningHtml(j)}</td>
           <td class="num">${fmtMoney(j.billedToDate)}</td>
           <td class="num">${fmtMoney(j.amountPaid)}${paymentLogHtml(j)}</td>
           <td class="num" style="color:var(--bad-500);font-weight:700;">${fmtMoney(j.balanceDue)}</td>
@@ -2973,6 +2973,18 @@ function completedSummaryHtml(job){
     return `${s.material}: ${fmtQty(s.qty)} ${unitLabel(s.paymentType)} across ${s.loadsCount} load${s.loadsCount===1?'':'s'}${pctStr}`;
   }).join('<br>');
 }
+// A completed load whose material name doesn't match any material line on its
+// job can't be priced — it silently bills at $0. Surface that loudly instead
+// of letting the job's total quietly come up short.
+function unpricedLoadsForJob(job){
+  return completedLoadsForJob(job).filter(l=>!rateAndTaxForLoad(l).matched);
+}
+function unpricedWarningHtml(job){
+  const bad = unpricedLoadsForJob(job);
+  if(!bad.length) return '';
+  const names = [...new Set(bad.map(l=>l.material||'(no material)'))].join('", "');
+  return `<div style="font-size:11px; color:var(--bad-500); font-weight:700; margin-top:4px; white-space:normal; max-width:260px;">⚠ ${bad.length} load(s) NOT included in the total — material "${names}" doesn't match any material on this job. Rename one so they match exactly.</div>`;
+}
 // ---- Client-facing NFS invoice: bills material + trucking + profit + tax,
 // not just the trucking leg — the actual document sent to clients, distinct
 // from the internal Weekly "Invoice by Client" reconciliation view (which
@@ -3182,7 +3194,7 @@ function renderSalesJobsSection(){
             <td>${(j.materials||[]).filter(m=>m.material).map(m=>
               `${m.material} (${m.qtyFinal||m.qtyRequested||0} ${unitLabelSales(m.unit)})`
             ).join('<br>') || '—'}</td>
-            <td style="font-size:12px;">${completedSummaryHtml(j) || '—'}</td>
+            <td style="font-size:12px;">${completedSummaryHtml(j) || '—'}${unpricedWarningHtml(j)}</td>
             <td class="num">${fmtMoney(j.totalMaterial)}</td><td class="num">${fmtMoney(j.totalTax)}</td>
             <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
             <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td>
@@ -3237,7 +3249,7 @@ function renderWeeklyTab(){
   function driverTable(groupObj){
     const entries = Object.entries(groupObj);
     if(!entries.length) return `<div class="empty">No loads in this range yet.</div>`;
-    let totalNet = 0;
+    let totalNet = 0, stillToClear = 0;
     const bodyRows = entries.map(([name,items])=>{
       const companies = [...new Set(items.map(i=>i.company))].join(' + ');
       const primaryCompany = items[0].company;
@@ -3246,6 +3258,9 @@ function renderWeeklyTab(){
       const netPay = owed - deduction;
       totalNet += netPay;
       const rec = getPayrollRecord(name, start, end);
+      // Checks not yet deposited are money that still has to stay in the
+      // account — the deposited checkbox subtracts a driver from this figure.
+      if(!(rec&&rec.deposited)) stillToClear += netPay;
       const nameAttr = name.replace(/"/g,'&quot;');
       const payCells = PAYROLL_PAYREF_COLUMNS_EXIST ? `
         <td><input type="text" class="payref-input" placeholder="Check # / Zelle" data-driver="${nameAttr}" data-company="${primaryCompany}" value="${((rec&&rec.payRef)||'').replace(/"/g,'&quot;')}" style="width:110px; border:1px solid var(--steel-200); border-radius:5px; padding:5px 7px;"></td>
@@ -3256,6 +3271,7 @@ function renderWeeklyTab(){
     return `<div class="tablewrap"><table><thead><tr><th>Driver</th><th>Company</th><th># Loads</th><th>Amount Owed</th><th>Deductions</th><th>Net Pay</th><th>Paid Via</th><th>Deposited</th></tr></thead><tbody>
       ${bodyRows}
       <tr class="grouprow"><td colspan="5">TOTAL PAYROLL FOR THIS RANGE (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td><td colspan="2"></td></tr>
+      <tr class="grouprow"><td colspan="5" style="color:var(--amber-600);">STILL TO CLEAR — checks not yet deposited (keep this in the account)</td><td class="num" style="color:var(--amber-600);">${fmtMoney(stillToClear)}</td><td colspan="2"></td></tr>
     </tbody></table></div>`;
   }
 

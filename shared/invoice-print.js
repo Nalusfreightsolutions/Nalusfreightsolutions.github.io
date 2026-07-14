@@ -150,7 +150,7 @@ function printDriverPayroll(){
     return s.label==='Complete' ? '' : s.label;
   };
 
-  let totalNet = 0;
+  let totalNet = 0, stillToClear = 0;
   const rows = entries.map(([name, items])=>{
     const companies = [...new Set(items.map(i=>i.company))].join(' + ');
     const flag = complianceFlagFor(name);
@@ -163,6 +163,7 @@ function printDriverPayroll(){
     const rec = (typeof getPayrollRecord==='function') ? getPayrollRecord(name, start, end) : null;
     const payRef = (rec&&rec.payRef)||'';
     const deposited = !!(rec&&rec.deposited);
+    if(!deposited) stillToClear += netPay;
     return `
     <tr>
       <td>${name}${flag ? ` <span style="color:#C0362C; font-weight:700;">⚠ ${flag}</span>` : ''}</td>
@@ -191,7 +192,10 @@ function printDriverPayroll(){
       <tbody>${rows}</tbody>
     </table>
     <div class="inv-totals">
-      <table><tr class="grand"><td>Total Payroll (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td></tr></table>
+      <table>
+        <tr class="grand"><td>Total Payroll (after deductions)</td><td class="num">${fmtMoney(totalNet)}</td></tr>
+        <tr><td style="color:#CC6E0C; font-weight:700;">Still to clear — not yet deposited</td><td class="num" style="color:#CC6E0C; font-weight:700;">${fmtMoney(stillToClear)}</td></tr>
+      </table>
     </div>`;
 
   document.getElementById('invoice-modal').innerHTML = `
