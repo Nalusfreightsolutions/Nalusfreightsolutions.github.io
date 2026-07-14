@@ -3151,8 +3151,8 @@ function renderSalesJobsSection(){
   const rows = state.salesJobs.slice().sort((a,b)=>(b.jobStarted||'').localeCompare(a.jobStarted||''));
   const clientOptions = state.clients.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<option ${f.client===c.name?'selected':''}>${c.name}</option>`).join('');
   state.salesJobs.forEach(computeJobBilledToDate);
-  const totalProfit = sum(state.salesJobs,'totalProfit');
-  const totalBilled = sum(state.salesJobs,'totalBilled');
+  const totalProfit = sum(state.salesJobs,'profitToDate');
+  const totalBilled = sum(state.salesJobs,'billedToDate');
   const totalBalanceDue = sum(state.salesJobs,'balanceDue');
   const draftTotal = sum(salesJobMaterialDraft.map(m=>computeMaterialLine({...m})), 'lineTotal');
   const draftProfit = sum(salesJobMaterialDraft.map(m=>computeMaterialLine({...m})), 'profit');
@@ -3160,8 +3160,8 @@ function renderSalesJobsSection(){
 
   return `
   <div class="statgrid" style="margin-bottom:16px;">
-    <div class="stat amber"><div class="label">Total Landed Job Profit</div><div class="value">${fmtMoney(totalProfit)}</div></div>
-    <div class="stat"><div class="label">Total Billed (All Landed Jobs)</div><div class="value">${fmtMoney(totalBilled)}</div></div>
+    <div class="stat amber"><div class="label">Total Landed Job Profit (to Date)</div><div class="value">${fmtMoney(totalProfit)}</div></div>
+    <div class="stat"><div class="label">Total Billed to Date (All Landed Jobs)</div><div class="value">${fmtMoney(totalBilled)}</div></div>
     <div class="stat"><div class="label">Balance Due (Billed to Date, Unpaid)</div><div class="value">${fmtMoney(totalBalanceDue)}</div></div>
   </div>
 
@@ -3196,8 +3196,8 @@ function renderSalesJobsSection(){
     <div class="tablewrap">
     <table>
       <thead><tr>
-        <th>Client</th><th>Job Name</th><th>Started</th><th>Ended</th><th>Materials</th><th>Completed</th>
-        <th>Material $</th><th>Tax</th><th>Trucking</th><th>Profit</th><th>Total Billed</th>
+        <th>Client</th><th>Job Name</th><th>Started</th><th>Ended</th><th>Materials (Quoted)</th><th>Completed</th>
+        <th>Material $ (to Date)</th><th>Tax (to Date)</th><th>Trucking (to Date)</th><th>Profit (to Date)</th>
         <th>Billed to Date</th><th>Paid</th><th>Balance Due</th><th>Rep</th><th></th>
       </tr></thead>
       <tbody>
@@ -3210,16 +3210,15 @@ function renderSalesJobsSection(){
               `${m.material} (${m.qtyFinal||m.qtyRequested||0} ${unitLabelSales(m.unit)})`
             ).join('<br>') || '—'}</td>
             <td style="font-size:12px;">${completedSummaryHtml(j) || '—'}${unpricedWarningHtml(j)}</td>
-            <td class="num">${fmtMoney(j.totalMaterial)}</td><td class="num">${fmtMoney(j.totalTax)}</td>
-            <td class="num">${fmtMoney(j.totalTrucking)}</td><td class="num">${fmtMoney(j.totalProfit)}</td>
-            <td class="num"><strong>${fmtMoney(j.totalBilled)}</strong></td>
-            <td class="num">${fmtMoney(j.billedToDate)}</td>
+            <td class="num">${fmtMoney(j.materialCostToDate)}</td><td class="num">${fmtMoney(j.taxToDate)}</td>
+            <td class="num">${fmtMoney(j.truckingCostToDate)}</td><td class="num">${fmtMoney(j.profitToDate)}</td>
+            <td class="num"><strong>${fmtMoney(j.billedToDate)}</strong></td>
             <td class="num">${fmtMoney(j.amountPaid)}${paymentLogHtml(j)}</td>
             <td class="num" style="${j.balanceDue>0.01?'color:var(--bad-500);font-weight:700;':''}">${fmtMoney(j.balanceDue)}</td>
             <td>${j.salesRep||''}</td>
             <td><button class="btn btn-ghost btn-sm" data-edit-salesjob="${j.id}">Edit</button> <button class="btn btn-danger btn-sm" data-del-salesjob="${j.id}">Delete</button></td>
           </tr>`;
-        }).join('') : `<tr><td colspan="16"><div class="empty">No landed jobs yet — win a quote and mark it Landed, or add one directly.</div></td></tr>`}
+        }).join('') : `<tr><td colspan="15"><div class="empty">No landed jobs yet — win a quote and mark it Landed, or add one directly.</div></td></tr>`}
       </tbody>
     </table>
     </div>
